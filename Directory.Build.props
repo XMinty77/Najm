@@ -7,6 +7,12 @@
     <ContinuousIntegrationBuild Condition="'$(CI)' == 'true'">true</ContinuousIntegrationBuild>
   </PropertyGroup>
 
+  <PropertyGroup>
+    <Authors>Abdelhadi BOUZIANI</Authors>
+    <Copyright>Copyright (c) 2026 Abdelhadi BOUZIANI</Copyright>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+  </PropertyGroup>
+
   <PropertyGroup Condition="'$(MSBuildProjectName)' == 'Najm.Utils' Or '$(MSBuildProjectName)' == 'Najm.Core'">
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
   </PropertyGroup>

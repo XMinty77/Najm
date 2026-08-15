@@ -1,5 +1,10 @@
 # Third-Party Notices
 
+Najm itself is licensed under the MIT License; see `LICENSE`. That license
+covers Najm's own source and documentation only. The bundled font files are
+redistributed under their own upstream terms, which are not MIT and are stated
+per component below.
+
 Najm includes or consumes the following third-party components. This notice is
 informational; the complete font license texts and upstream manifests are kept
 beside the corresponding assets under `src/Najm.Text/Fonts/` and are configured
