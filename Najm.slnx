@@ -1,0 +1,12 @@
+<Solution>
+  <Project Path="benchmarks/Najm.Benchmarks/Najm.Benchmarks.csproj" />
+  <Project Path="src/Najm.Core/Najm.Core.csproj" />
+  <Project Path="src/Najm.Skia/Najm.Skia.csproj" />
+  <Project Path="src/Najm.Text/Najm.Text.csproj" />
+  <Project Path="src/Najm.Utils/Najm.Utils.csproj" />
+  <Project Path="tests/Najm.Architecture.Tests/Najm.Architecture.Tests.csproj" />
+  <Project Path="tests/Najm.Core.Tests/Najm.Core.Tests.csproj" />
+  <Project Path="tests/Najm.Skia.Tests/Najm.Skia.Tests.csproj" />
+  <Project Path="tests/Najm.Text.Tests/Najm.Text.Tests.csproj" />
+  <Project Path="tests/Najm.Utils.Tests/Najm.Utils.Tests.csproj" />
+</Solution>

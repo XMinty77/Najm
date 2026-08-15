@@ -1,0 +1,100 @@
+{
+  "schemaVersion": 1,
+  "families": [
+    {
+      "name": "Latin Modern Roman",
+      "version": "2.005",
+      "source": "https://mirrors.ctan.org/fonts/lm.zip",
+      "archiveSha256": "71c48809cb50fbfe09c8eddaa251398957c7b243acdf69f7f807268f0d42c939",
+      "copyright": "Copyright 2003-2021 by B. Jackowski and J.M. Nowacki (on behalf of TeX Users Groups).",
+      "license": "GUST Font License 1.0; an LPPL 1.3c-or-later license with the additional font-name request in the included license text.",
+      "files": [
+        {
+          "file": "LatinModernRoman-2.005/lmroman10-regular.otf",
+          "upstreamPath": "lm/fonts/opentype/public/lm/lmroman10-regular.otf",
+          "embeddedResource": "Najm.Text.Fonts.lmroman10-regular.otf",
+          "length": 111536,
+          "sha256": "1aa18cfefa58132c52ce5de70db1fd1154201c19cd2b2cdaffba4906a33e6852"
+        },
+        {
+          "file": "LatinModernRoman-2.005/lmroman10-bold.otf",
+          "upstreamPath": "lm/fonts/opentype/public/lm/lmroman10-bold.otf",
+          "embeddedResource": "Najm.Text.Fonts.lmroman10-bold.otf",
+          "length": 111240,
+          "sha256": "102fe06c430a8b681b2bf6876b7cd967ae4d47b4b6b41d915eb7913b726d9fb1"
+        },
+        {
+          "file": "LatinModernRoman-2.005/lmroman10-italic.otf",
+          "upstreamPath": "lm/fonts/opentype/public/lm/lmroman10-italic.otf",
+          "embeddedResource": "Najm.Text.Fonts.lmroman10-italic.otf",
+          "length": 118828,
+          "sha256": "c1fce25075567bb8dbf2151658c3b442690041db17a2d49fc9e55905ea5b7169"
+        },
+        {
+          "file": "LatinModernRoman-2.005/lmroman10-bolditalic.otf",
+          "upstreamPath": "lm/fonts/opentype/public/lm/lmroman10-bolditalic.otf",
+          "embeddedResource": "Najm.Text.Fonts.lmroman10-bolditalic.otf",
+          "length": 118204,
+          "sha256": "c37a28eed7a6e03f792b98b5e5f637b2fcda378bb4855f99284f1a88fe35f124"
+        }
+      ],
+      "documents": [
+        {
+          "file": "LatinModernRoman-2.005/GUST-FONT-LICENSE.TXT",
+          "upstreamPath": "lm/doc/fonts/lm/GUST-FONT-LICENSE.TXT",
+          "length": 1377,
+          "sha256": "49ea6cb9257bbee0a3979c48a774cd221550ac1c20c95549efe45fc99cc18050"
+        },
+        {
+          "file": "LatinModernRoman-2.005/README-Latin-Modern.TXT",
+          "upstreamPath": "lm/doc/fonts/lm/README-Latin-Modern.TXT",
+          "length": 33548,
+          "sha256": "7cac4a4a78985ccb1ed429bb2eddf32eeb2e413c94493c7b268385bb7b525250"
+        },
+        {
+          "file": "LatinModernRoman-2.005/MANIFEST-Latin-Modern.TXT",
+          "upstreamPath": "lm/doc/fonts/lm/MANIFEST-Latin-Modern.TXT",
+          "length": 52635,
+          "sha256": "402c79f4ede8548a6fe6f82f42f0288cb0243ba2403dfdeeaadf55d189a46fae"
+        }
+      ]
+    },
+    {
+      "name": "Latin Modern Math",
+      "version": "1.959",
+      "source": "https://mirrors.ctan.org/fonts/lm-math.zip",
+      "archiveSha256": "3d906317f27279af05eb095aa4db5e7f3f87312e69d672e8f8928b64adcd403c",
+      "copyright": "Copyright 2012-2014 for the Latin Modern math extensions by B. Jackowski, P. Strzelczyk and P. Pianowski (on behalf of TeX Users Groups).",
+      "license": "GUST Font License; an instance of the LPPL, as stated in the included upstream license and README.",
+      "files": [
+        {
+          "file": "LatinModernMath-1.959/latinmodern-math.otf",
+          "upstreamPath": "lm-math/opentype/latinmodern-math.otf",
+          "embeddedResource": "Najm.Text.Fonts.latinmodern-math.otf",
+          "length": 733736,
+          "sha256": "6075562b771f8b82f0c179e363389684f2dd09de30038269e2628e504bd7be0f"
+        }
+      ],
+      "documents": [
+        {
+          "file": "LatinModernMath-1.959/GUST-FONT-LICENSE.txt",
+          "upstreamPath": "lm-math/doc/GUST-FONT-LICENSE.txt",
+          "length": 1456,
+          "sha256": "2bd69affc3da00715116f713f57eab9707e96daf3562ad0215987b15b9c16f73"
+        },
+        {
+          "file": "LatinModernMath-1.959/README-Latin-Modern-Math.txt",
+          "upstreamPath": "lm-math/doc/README-Latin-Modern-Math.txt",
+          "length": 4588,
+          "sha256": "e6fdd5fb44b656146fa988d191f58901c09a347d3f4fbaa3b45b24a6ad7ec30b"
+        },
+        {
+          "file": "LatinModernMath-1.959/MANIFEST-Latin-Modern-Math.txt",
+          "upstreamPath": "lm-math/doc/MANIFEST-Latin-Modern-Math.txt",
+          "length": 2186,
+          "sha256": "1daa729f7922c42ba5ce8da7dfe4ecdc9e5c878ad86217fd6f32c4671505b007"
+        }
+      ]
+    }
+  ]
+}

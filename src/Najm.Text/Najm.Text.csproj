@@ -1,0 +1,48 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="HarfBuzzSharp" />
+    <PackageReference Include="HarfBuzzSharp.NativeAssets.Linux" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../Najm.Core/Najm.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Fonts/LatinModernRoman-2.005/lmroman10-regular.otf"
+                      LogicalName="Najm.Text.Fonts.lmroman10-regular.otf" />
+    <EmbeddedResource Include="Fonts/LatinModernRoman-2.005/lmroman10-bold.otf"
+                      LogicalName="Najm.Text.Fonts.lmroman10-bold.otf" />
+    <EmbeddedResource Include="Fonts/LatinModernRoman-2.005/lmroman10-italic.otf"
+                      LogicalName="Najm.Text.Fonts.lmroman10-italic.otf" />
+    <EmbeddedResource Include="Fonts/LatinModernRoman-2.005/lmroman10-bolditalic.otf"
+                      LogicalName="Najm.Text.Fonts.lmroman10-bolditalic.otf" />
+    <EmbeddedResource Include="Fonts/LatinModernMath-1.959/latinmodern-math.otf"
+                      LogicalName="Najm.Text.Fonts.latinmodern-math.otf" />
+    <EmbeddedResource Include="Fonts/fonts.manifest.json"
+                      LogicalName="Najm.Text.Fonts.fonts.manifest.json" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="Fonts/LatinModernRoman-2.005/*.TXT"
+          Pack="true"
+          PackagePath="licenses/Najm.Text/fonts/LatinModernRoman-2.005/%(Filename)%(Extension)" />
+    <None Update="Fonts/LatinModernMath-1.959/*.txt"
+          Pack="true"
+          PackagePath="licenses/Najm.Text/fonts/LatinModernMath-1.959/%(Filename)%(Extension)" />
+    <None Update="Fonts/fonts.manifest.json"
+          Pack="true"
+          PackagePath="licenses/Najm.Text/fonts/fonts.manifest.json" />
+    <None Update="README.md" Pack="true" PackagePath="" />
+    <None Include="../../THIRD-PARTY-NOTICES.md"
+          Link="THIRD-PARTY-NOTICES.md"
+          Pack="true"
+          PackagePath="" />
+  </ItemGroup>
+</Project>

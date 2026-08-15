@@ -1,0 +1,62 @@
+using Najm.Core;
+using SkiaSharp;
+using CoreColorSpace = Najm.Core.ColorSpace;
+
+namespace Najm.Skia;
+
+/// <summary>Creates top-left-origin CPU-raster Skia targets.</summary>
+/// <remarks>
+/// The provider is single-threaded and environment-lifetime. Raster targets use analytic
+/// antialiasing, so every requested sample count is normalized to one.
+/// </remarks>
+public sealed class RasterSkiaSurfaceProvider : ISurfaceProvider
+{
+    private bool disposed;
+
+    /// <inheritdoc />
+    public IRenderTarget CreateTarget(in SurfaceSpec spec)
+    {
+        ObjectDisposedException.ThrowIf(disposed, this);
+
+        var normalizedSpec = spec.NormalizeForRaster();
+        using var colorSpace = normalizedSpec.ColorSpace switch
+        {
+            CoreColorSpace.Srgb => SKColorSpace.CreateSrgb(),
+            CoreColorSpace.LinearSrgb => SKColorSpace.CreateSrgbLinear(),
+            _ => throw new ArgumentOutOfRangeException(nameof(spec), "The color-space tag is not supported."),
+        };
+        var colorType = normalizedSpec.ColorSpace switch
+        {
+            CoreColorSpace.Srgb => SKColorType.Rgba8888,
+            CoreColorSpace.LinearSrgb => SKColorType.RgbaF16,
+            _ => throw new ArgumentOutOfRangeException(nameof(spec), "The color-space tag is not supported."),
+        };
+        var imageInfo = new SKImageInfo(
+            normalizedSpec.Width,
+            normalizedSpec.Height,
+            colorType,
+            SKAlphaType.Premul,
+            colorSpace);
+        using var properties = new SKSurfaceProperties(SKPixelGeometry.Unknown);
+        var surface = SKSurface.Create(imageInfo, properties)
+            ?? throw new InvalidOperationException(
+                $"Skia failed to create a {normalizedSpec.Width}×{normalizedSpec.Height} raster surface.");
+
+        try
+        {
+            return new SkiaRenderTarget(surface, normalizedSpec);
+        }
+        catch
+        {
+            surface.Dispose();
+            throw;
+        }
+    }
+
+    /// <summary>Marks the provider closed to new target creation.</summary>
+    /// <remarks>
+    /// Callers must dispose every created target before disposing the provider. Use of a retained
+    /// target after provider disposal is outside the lifetime contract and is not supported.
+    /// </remarks>
+    public void Dispose() => disposed = true;
+}

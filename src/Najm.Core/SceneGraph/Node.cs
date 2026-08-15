@@ -1,0 +1,275 @@
+namespace Najm.Core;
+
+/// <summary>Provides identity, parenting, and insertion-ordered children for a scene-graph node.</summary>
+/// <remarks>
+/// A detached tree mutates immediately. While a tree is attached to a loaded
+/// scene, or reserved by one of that scene's pending edits, the same public
+/// <see cref="Add{T}(T)"/> and <see cref="Remove"/> calls are routed through the
+/// scene runtime. Edits requested during Update are deferred until that phase
+/// finishes; public topology remains unchanged until the queue flushes.
+/// </remarks>
+public abstract class Node
+{
+    private List<Node>? children;
+    private BehaviorCollection? behaviors;
+    private NodeChildren? childView;
+    private Layer? layer;
+    private Layer? layerRootOwner;
+    private Node? parent;
+    private INodeMutationSink? mutationSink;
+    private INodeMutationSink? reservationSink;
+
+    /// <summary>Gets this node's parent, or <see langword="null"/> while it is a root.</summary>
+    public Node? Parent => parent;
+
+    /// <summary>
+    /// Gets a live, read-only, insertion-ordered view of this node's children.
+    /// </summary>
+    public NodeChildren Children => childView ??= new NodeChildren(this);
+
+    /// <summary>Gets this node's controlled, attach-ordered behavior collection.</summary>
+    public BehaviorCollection Behaviors => behaviors ??= new BehaviorCollection(this);
+
+    /// <summary>Gets the owning layer while attached, or <see langword="null"/> while detached.</summary>
+    public Layer? Layer => layer;
+
+    /// <summary>Gets or sets whether this node and its subtree participate in Update.</summary>
+    public bool Enabled { get; set; } = true;
+
+    /// <summary>Gets or sets whether this node and its subtree participate in rendering.</summary>
+    public bool Visible { get; set; } = true;
+
+    /// <summary>
+    /// Adds a detached child and returns it with its concrete type preserved.
+    /// </summary>
+    /// <exception cref="ArgumentNullException"><paramref name="child"/> is null.</exception>
+    /// <exception cref="InvalidOperationException">
+    /// The edit would create a cycle, duplicate a child, or give a child multiple parents.
+    /// </exception>
+    public T Add<T>(T child)
+        where T : Node
+    {
+        ArgumentNullException.ThrowIfNull(child);
+
+        var sink = mutationSink ?? reservationSink;
+        if (sink is not null)
+        {
+            sink.RequestAdd(this, child);
+        }
+        else
+        {
+            AddImmediate(child);
+        }
+
+        return child;
+    }
+
+    /// <summary>
+    /// Removes a direct child by identity. Returns false when the node is not a
+    /// direct child; removing never searches descendants.
+    /// </summary>
+    public bool Remove(Node child)
+    {
+        ArgumentNullException.ThrowIfNull(child);
+
+        var sink = mutationSink ?? reservationSink;
+        return sink is not null
+            ? sink.RequestRemove(this, child)
+            : RemoveImmediate(child);
+    }
+
+    internal int ChildCount => children?.Count ?? 0;
+
+    internal int BehaviorCount => behaviors?.Count ?? 0;
+
+    internal INodeMutationSink? MutationSink => mutationSink;
+
+    internal INodeMutationSink? ReservationSink => reservationSink;
+
+    internal Layer? LayerRootOwner => layerRootOwner;
+
+    internal Node GetChild(int index) =>
+        children is null ? throw new ArgumentOutOfRangeException(nameof(index)) : children[index];
+
+    internal Behavior GetBehavior(int index) =>
+        behaviors is null ? throw new ArgumentOutOfRangeException(nameof(index)) : behaviors[index];
+
+    internal void AddImmediate(Node child)
+    {
+        ValidateAdd(child);
+
+        children ??= [];
+        children.Add(child);
+
+        var previousParent = child.parent;
+        child.parent = this;
+        child.SetMutationSinkRecursively(mutationSink);
+        child.OnParentChanged(previousParent, this);
+    }
+
+    internal bool RemoveImmediate(Node child)
+    {
+        if (!ReferenceEquals(child.parent, this))
+        {
+            return false;
+        }
+
+        var index = IndexOfChild(child);
+        if (index < 0)
+        {
+            throw new InvalidOperationException("The node parent and child list are inconsistent.");
+        }
+
+        children!.RemoveAt(index);
+        child.parent = null;
+        child.SetMutationSinkRecursively(null);
+        child.OnParentChanged(this, null);
+        return true;
+    }
+
+    internal void SetMutationSinkRecursively(INodeMutationSink? sink)
+    {
+        mutationSink = sink;
+
+        for (var index = 0; index < ChildCount; index++)
+        {
+            GetChild(index).SetMutationSinkRecursively(sink);
+        }
+    }
+
+    internal void SetReservationSinkRecursively(INodeMutationSink? sink)
+    {
+        reservationSink = sink;
+
+        for (var behaviorIndex = 0; behaviorIndex < BehaviorCount; behaviorIndex++)
+        {
+            GetBehavior(behaviorIndex).SetReservationSink(sink);
+        }
+        for (var childIndex = 0; childIndex < ChildCount; childIndex++)
+        {
+            GetChild(childIndex).SetReservationSinkRecursively(sink);
+        }
+    }
+
+    internal void SetReservationSink(INodeMutationSink? sink) => reservationSink = sink;
+
+    internal void SetLayerRecursively(Layer? value)
+    {
+        layer = value;
+
+        for (var index = 0; index < ChildCount; index++)
+        {
+            GetChild(index).SetLayerRecursively(value);
+        }
+    }
+
+    internal void AssignLayerRoot(Layer owner)
+    {
+        if (parent is not null)
+        {
+            throw new InvalidOperationException("A layer root cannot already have a parent.");
+        }
+        if (layerRootOwner is not null)
+        {
+            if (ReferenceEquals(layerRootOwner, owner))
+            {
+                return;
+            }
+
+            throw new InvalidOperationException("A node cannot be the permanent root of multiple layers.");
+        }
+
+        layerRootOwner = owner;
+    }
+
+    internal void InvokeAttach() => OnAttach();
+
+    internal void InvokeDetach() => OnDetach();
+
+    internal void InvokeUpdate(in TickContext tick) => Update(tick);
+
+    /// <summary>Runs when this node becomes attached to a loaded scene.</summary>
+    protected virtual void OnAttach()
+    {
+    }
+
+    /// <summary>Runs when this node leaves its loaded scene.</summary>
+    protected virtual void OnDetach()
+    {
+    }
+
+    /// <summary>Updates this node before its behaviors and children.</summary>
+    protected virtual void Update(in TickContext tick)
+    {
+    }
+
+    internal virtual void OnParentChanged(Node? previousParent, Node? currentParent)
+    {
+    }
+
+    private void ValidateAdd(Node child)
+    {
+        if (SpaceKind != child.SpaceKind)
+        {
+            throw new InvalidOperationException(
+                $"A {child.SpaceKind} node cannot be parented beneath a {SpaceKind} node.");
+        }
+
+        for (Node? ancestor = this; ancestor is not null; ancestor = ancestor.parent)
+        {
+            if (ReferenceEquals(ancestor, child))
+            {
+                throw new InvalidOperationException("A node cannot be added to itself or one of its descendants.");
+            }
+        }
+
+        if (child.parent is not null)
+        {
+            var message = ReferenceEquals(child.parent, this)
+                ? "The node is already a child of this parent."
+                : "The node already has a different parent.";
+            throw new InvalidOperationException(message);
+        }
+
+        if (child.layerRootOwner is not null)
+        {
+            throw new InvalidOperationException("A layer root cannot be parented beneath another node.");
+        }
+
+        var ownerSink = mutationSink ?? reservationSink;
+        if (child.mutationSink is not null && !ReferenceEquals(child.mutationSink, ownerSink))
+        {
+            throw new InvalidOperationException("An attached node cannot be added to a detached or different tree.");
+        }
+        if (child.reservationSink is not null && !ReferenceEquals(child.reservationSink, ownerSink))
+        {
+            throw new InvalidOperationException("A node reserved by a scene mutation cannot be claimed elsewhere.");
+        }
+    }
+
+    private int IndexOfChild(Node child)
+    {
+        if (children is null)
+        {
+            return -1;
+        }
+
+        for (var index = 0; index < children.Count; index++)
+        {
+            if (ReferenceEquals(children[index], child))
+            {
+                return index;
+            }
+        }
+
+        return -1;
+    }
+
+    internal virtual NodeSpaceKind SpaceKind => NodeSpaceKind.None;
+}
+
+internal enum NodeSpaceKind : byte
+{
+    None,
+    TwoD,
+}

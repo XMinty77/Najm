@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="BenchmarkDotNet" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/Najm.Core/Najm.Core.csproj" />
+    <ProjectReference Include="../../src/Najm.Skia/Najm.Skia.csproj" />
+    <ProjectReference Include="../../src/Najm.Utils/Najm.Utils.csproj" />
+  </ItemGroup>
+</Project>

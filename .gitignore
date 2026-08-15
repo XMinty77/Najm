@@ -1,0 +1,37 @@
+# Build output
+**/bin/
+**/obj/
+artifacts/
+
+# Test and benchmark output
+TestResults/
+coverage/
+coverage.*
+*.coverage
+*.coveragexml
+BenchmarkDotNet.Artifacts/
+
+# Package output
+*.nupkg
+*.snupkg
+packages/
+
+# IDE and user-local files
+.vs/
+.idea/
+.vscode/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.DotSettings.user
+
+# Operating-system noise
+.DS_Store
+Thumbs.db
+
+# Local logs and scratch files
+*.log
+*.tmp
+*.bak
+

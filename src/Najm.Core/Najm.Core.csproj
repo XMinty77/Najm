@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="../Najm.Utils/Najm.Utils.csproj" />
+  </ItemGroup>
+</Project>
+
