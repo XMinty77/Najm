@@ -133,6 +133,31 @@ settled deliberately rather than by whatever the first implementation needs.
 
 ---
 
+## 6. Exception types for "fail loud"
+
+**Docs:** the house rule is stated repeatedly — "author mistakes fail loud;
+environment shortfalls degrade correctly and say so" (NAJM-TEXT VI.3), "fail
+loudly for unsupported author requests" (`PLAN.md`). Specific failures are
+enumerated with required *message content* ("naming the option to set", "with
+the character position", "naming the decorator"). But no document maps any
+failure class to a .NET exception type, and no `NajmException` hierarchy is
+specified.
+
+**Decision:** follow the distribution the existing code already established —
+`InvalidOperationException` for lifecycle and contract violations,
+`ArgumentOutOfRangeException` / `ArgumentException` for parameter validation,
+`InvalidDataException` for malformed asset or font bytes,
+`NotSupportedException` for a capability the backend genuinely lacks. No custom
+exception base type until something needs to catch Najm failures selectively.
+
+**Why:** consistency with the 165-odd throw sites already in the tree is the
+only signal available, and inventing a hierarchy now would be a public-surface
+commitment made on no evidence.
+
+**Status:** Open.
+
+---
+
 ## Documentation conflicts
 
 Places where the reference set disagrees with itself. Recorded so the
@@ -152,6 +177,37 @@ enumerable skip condition".
 `ARCHITECTURE.md` §10.6 writes `Ease.OutCubic`; Appendix B.1 writes
 `Ease.CubicOut`. Already resolved by `PLAN.md` resolution 3 in favour of
 direction-first (`Ease.OutCubic`), which is what `Najm.Utils` implements.
+
+### M1 scope: ROADMAP vs. PLAN phasing
+
+`ROADMAP.md` M1 scope includes "Desktop live preview", "Method-body hot reload
+plus manual `F5` warm restart", and the debug overlay. `PLAN.md` places the
+desktop host, hot reload, and initial diagnostics in **Phase 4**, under
+"Provisional scope: phases 4 through 6".
+
+M1 therefore cannot be declared complete by finishing PLAN's approved phases
+1–3. Which document governs the M1 boundary is unresolved, and it decides
+whether Silk.NET and a windowing loop are in the current body of work or not.
+
+### `Najm.Text`'s CSharpMath dependency
+
+`NAJM-TEXT.md` §0 pins `CSharpMath.SkiaSharp`, and `ARCHITECTURE.md` §16 lists
+`Najm.Text`'s dependency row as "Core, SkiaSharp, HarfBuzzSharp, CSharpMath".
+`PLAN.md` resolution 7 says the opposite: "Fast math uses `CSharpMath.Rendering`
+through a Najm-owned portable canvas that records an atomic `VectorPicture`;
+`Najm.Text` does not depend on `CSharpMath.SkiaSharp` or SkiaSharp."
+
+`PLAN.md` is later-dated and claims to resolve gaps "unless later architecture
+edits supersede them", and the implemented `Najm.Text.csproj` follows it —
+HarfBuzzSharp and Najm.Core only, no SkiaSharp. The architecture test's
+allowlist already anticipates `CSharpMath`/`CSharpMath.Rendering`.
+
+Unresolved consequence: `CSharpMath` and `CSharpMath.Rendering` are pinned in
+`Directory.Packages.props` and allowlisted by the architecture test, but no
+project references either, and no compatibility spike has been run. `PLAN.md`
+Phase 1 required that spike, and resolution 7's whole approach depends on
+`CSharpMath.Rendering` exposing a canvas seam Najm can implement portably.
+That assumption is currently unverified.
 
 ### Direct-path bracket predicate
 
