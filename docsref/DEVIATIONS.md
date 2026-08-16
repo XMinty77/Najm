@@ -86,7 +86,9 @@ Given that, one world unit to one virtual unit at `Zoom = 1` is the only
 fixpoint that does not introduce an arbitrary constant, and center-anchoring is
 what makes `CenterOn` and `FitRect` express naturally.
 
-**Status:** Open.
+**Status:** Implemented. The Y-flip sign was confirmed by mutation: replacing
+`Scale(Zoom, -Zoom)` with `Scale(Zoom, Zoom)` fails exactly the sign-sensitive
+tests and nothing else.
 
 ---
 
@@ -187,6 +189,26 @@ commitment made on no evidence.
 
 ---
 
+## 7. `Camera2D.FitRect` takes the virtual resolution
+
+**Docs:** Appendix B.2 writes `layer.Camera.FitRect(Bars.GeometryBounds)` — one
+argument. Fitting a rect requires knowing the viewport it must fit inside, and
+that is `Scene.VirtualResolution`, which the camera does not own and which does
+not exist in code yet.
+
+**Decision:** `FitRect(in Rect worldRect, in Vector2 virtualResolution)` for now.
+
+**Why:** a one-argument form has no honest source for the viewport size at this
+stage; inventing a default would silently frame against the wrong box. Once
+`Scene.VirtualResolution` lands, add the documented one-argument convenience on
+`WorldLayer2D` (which can reach its scene) forwarding to this, so author code
+reads as the reference shows.
+
+**Status:** Open — the two-argument form is implemented, the documented
+one-argument form is not.
+
+---
+
 ## Documentation conflicts
 
 Places where the reference set disagrees with itself. Recorded so the
@@ -214,9 +236,11 @@ plus manual `F5` warm restart", and the debug overlay. `PLAN.md` places the
 desktop host, hot reload, and initial diagnostics in **Phase 4**, under
 "Provisional scope: phases 4 through 6".
 
-M1 therefore cannot be declared complete by finishing PLAN's approved phases
-1–3. Which document governs the M1 boundary is unresolved, and it decides
-whether Silk.NET and a windowing loop are in the current body of work or not.
+**Resolved** by `PLAN.md` resolution 8: this plan governs, and all four stay in
+phase 4. Development runs on a headless VPS where a windowed host cannot run at
+all, so the deferred items were untestable in the only available environment.
+Rendered PNG therefore becomes the sole means of seeing a change, and acceptance
+stays visual through rendered stills rather than a live window.
 
 ### `Najm.Text`'s CSharpMath dependency
 
