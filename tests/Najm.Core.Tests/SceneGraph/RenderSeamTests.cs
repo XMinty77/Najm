@@ -189,6 +189,10 @@ public sealed class RenderSeamTests
             in Matrix3x2 imageToLocal,
             ImageSampling sampling = ImageSampling.Linear) => DrawCount++;
 
+        public void SetEngineTransform(in Matrix3x2 engineToDevice)
+        {
+        }
+
         public void PushTransform(in Matrix3x2 localTransform)
         {
         }

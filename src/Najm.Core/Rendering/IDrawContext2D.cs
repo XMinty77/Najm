@@ -52,6 +52,32 @@ public interface IDrawContext2D
         in Matrix3x2 imageToLocal,
         ImageSampling sampling = ImageSampling.Linear);
 
+    /// <summary>
+    /// Backend-facing SPI: replaces the engine transform installed above all author state.
+    /// </summary>
+    /// <param name="engineToDevice">
+    /// The already composed <c>renderScale × layerBase × nodeWorld</c> mapping from the node's local
+    /// coordinates to device pixels. It must be finite.
+    /// </param>
+    /// <remarks>
+    /// This member is called by the engine's render traverser, not by authors. Authors use
+    /// <see cref="PushTransform"/>, which composes strictly below the engine transform and never
+    /// replaces it. The call is a set, not a push: it discards the previously installed engine
+    /// transform wholesale and leaves nothing to pop. Author
+    /// <see cref="PushTransform"/>/<see cref="PushClip(in Rect)"/>/<see cref="PushOpacity"/> state
+    /// composes below the new value, and <see cref="RenderScale"/> is unchanged because the driver
+    /// already folded it into <paramref name="engineToDevice"/>.
+    /// </remarks>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// A component of <paramref name="engineToDevice"/> is not finite.
+    /// </exception>
+    /// <exception cref="InvalidOperationException">
+    /// The author state stack is not empty. Authors must balance their pushes within a single
+    /// <c>Render</c> call, so an outstanding push means the engine transform would be installed
+    /// under state it does not own. The stack is not changed when this exception is thrown.
+    /// </exception>
+    void SetEngineTransform(in Matrix3x2 engineToDevice);
+
     /// <summary>Saves state and composes a finite local transform below the engine transform.</summary>
     void PushTransform(in Matrix3x2 localTransform);
 

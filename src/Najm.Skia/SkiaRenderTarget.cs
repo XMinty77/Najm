@@ -30,10 +30,19 @@ public sealed class SkiaRenderTarget : IRenderTarget
     /// instance. Any unbalanced state left by a prior acquisition is restored before this method
     /// returns.
     /// </remarks>
-    public IDrawContext2D GetContext()
+    public IDrawContext2D GetContext() => GetContext(1f);
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// Every acquisition begins a clean render pass on the same context instance, stamped with
+    /// <paramref name="renderScale"/> and with the uniform scale of that value installed as the
+    /// engine transform. Any unbalanced state left by a prior acquisition is restored before this
+    /// method returns.
+    /// </remarks>
+    public IDrawContext2D GetContext(float renderScale)
     {
-        var baseTransform = Matrix3x2.Identity;
-        return BeginPass(1f, RenderCaps.SkiaSurface, baseTransform);
+        var baseTransform = Matrix3x2.CreateScale(renderScale);
+        return BeginPass(renderScale, RenderCaps.SkiaSurface, baseTransform);
     }
 
     /// <inheritdoc />

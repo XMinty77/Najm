@@ -124,12 +124,41 @@ As written, Core's traverser cannot drive any backend. The docs do not say
 whether pass-begin belongs on `IRenderTarget`, on the backend-facing composition
 SPI, or stays backend-internal.
 
-**Decision:** unresolved.
+**Decision:** the seam is portable and splits in two.
 
-**Why it matters:** every future backend inherits this seam, so it should be
-settled deliberately rather than by whatever the first implementation needs.
+- `IRenderTarget.GetContext(float renderScale)` begins a clean pass at that
+  scale, with the uniform scale installed as the pass's initial engine
+  transform. The existing `GetContext()` becomes a default implementation
+  meaning `GetContext(1f)`, so no implementor is forced to write it. A
+  `renderScale` that is not finite and positive throws
+  `ArgumentOutOfRangeException`.
+- `IDrawContext2D.SetEngineTransform(in Matrix3x2 engineToDevice)` installs the
+  already composed `renderScale × layerBase × nodeWorld` mapping. It is a set,
+  not a push: it replaces the engine transform wholesale and leaves nothing to
+  pop. Author `PushTransform`/`PushClip`/`PushOpacity` compose strictly below
+  it, and it throws `InvalidOperationException` — naming the unbalanced kinds
+  that remain — when the author stack is not empty.
 
-**Status:** Open — blocking the traverser.
+`SkiaDrawContext2D` realizes both through the existing pass machinery:
+`SetEngineTransform` reinstalls the matrix on the pass's own save slot above the
+surface baseline, and `BeginPass(float, RenderCaps, in Matrix3x2)` stays
+`internal` but now routes its base transform through the same private installer
+rather than duplicating it, so the pass save count — and therefore `EndPass` —
+is unchanged.
+
+**Why:** the docs already establish that backend-facing SPI lives on the public
+surface, marked as such in XML documentation, for the composition brackets; the
+transform seam is the same kind of member for the same caller and belongs in the
+same place rather than behind an `internal` a portable Core cannot reach. One
+setter serves both paths: the composited path calls it per node, and the direct
+path (§5.3) simply calls it again per layer with that layer's base, so no second
+per-layer entry point is needed. Making the empty-stack requirement throw rather
+than assert turns §7.4's "authors balance their pushes within `Render`" into a
+structural guarantee the traverser can rely on in release builds, where an
+unbalanced author push would otherwise silently trap the engine transform under
+state the engine does not own.
+
+**Status:** Implemented.
 
 ---
 

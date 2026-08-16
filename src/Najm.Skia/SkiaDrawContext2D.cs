@@ -1,4 +1,5 @@
 using System.Numerics;
+using System.Text;
 using Najm.Core;
 using SkiaSharp;
 using CoreBlendMode = Najm.Core.BlendMode;
@@ -163,6 +164,26 @@ public sealed class SkiaDrawContext2D : IDrawContext2D
     }
 
     /// <inheritdoc />
+    /// <remarks>
+    /// The canvas matrix is replaced with <paramref name="engineToDevice"/> at the pass baseline
+    /// save slot, so the save count the pass was begun with is preserved and ending the pass still
+    /// restores the surface exactly. Requiring an empty author stack makes the balancing rule
+    /// structural instead of a debug-only assertion.
+    /// </remarks>
+    public void SetEngineTransform(in Matrix3x2 engineToDevice)
+    {
+        EnsureActive();
+        EnsureFiniteMatrix(engineToDevice, nameof(engineToDevice));
+        if (stateDepth != 0)
+        {
+            throw new InvalidOperationException(
+                $"Cannot set the engine transform while {stateDepth} unbalanced context state push(es) remain ({DescribeStack()}); author state must be balanced within Render.");
+        }
+
+        InstallEngineTransform(engineToDevice);
+    }
+
+    /// <inheritdoc />
     public void PushTransform(in Matrix3x2 localTransform)
     {
         EnsureActive();
@@ -290,14 +311,12 @@ public sealed class SkiaDrawContext2D : IDrawContext2D
                 nameof(caps));
         }
         EnsureFiniteMatrix(engineBaseTransform, nameof(engineBaseTransform));
-        var nativeBaseTransform = ToSkiaMatrix(engineBaseTransform);
 
         ResetToBaseline();
         var saveCount = canvas.SaveCount;
         try
         {
-            canvas.Save();
-            canvas.Concat(nativeBaseTransform);
+            InstallEngineTransform(engineBaseTransform);
             this.renderScale = renderScale;
             this.caps = caps;
             passActive = true;
@@ -542,6 +561,22 @@ public sealed class SkiaDrawContext2D : IDrawContext2D
         stateStack[--stateDepth] = StateKind.None;
     }
 
+    /// <summary>
+    /// Reinstalls the engine transform on the pass's own save slot, above the surface baseline and
+    /// below every author push. The caller guarantees the author stack is empty.
+    /// </summary>
+    private void InstallEngineTransform(in Matrix3x2 engineToDevice)
+    {
+        var nativeTransform = ToSkiaMatrix(engineToDevice);
+        if (canvas.SaveCount > baseSaveCount)
+        {
+            canvas.RestoreToCount(baseSaveCount);
+        }
+
+        canvas.Save();
+        canvas.Concat(nativeTransform);
+    }
+
     private void ResetToBaseline()
     {
         if (canvas.SaveCount > baseSaveCount)
@@ -646,6 +681,23 @@ public sealed class SkiaDrawContext2D : IDrawContext2D
         CoreBlendMode.Plus => SKBlendMode.Plus,
         _ => throw new ArgumentOutOfRangeException(nameof(blendMode), "The blend mode is not supported."),
     };
+
+    /// <summary>Names the unbalanced author state kinds, outermost push first.</summary>
+    private string DescribeStack()
+    {
+        var builder = new StringBuilder();
+        for (var index = 0; index < stateDepth; index++)
+        {
+            if (index != 0)
+            {
+                builder.Append(", ");
+            }
+
+            builder.Append(Describe(stateStack[index]));
+        }
+
+        return builder.ToString();
+    }
 
     private static string Describe(StateKind state) => state switch
     {

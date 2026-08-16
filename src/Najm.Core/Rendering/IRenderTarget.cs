@@ -21,9 +21,31 @@ public interface IRenderTarget : IDisposable
     /// <summary>Begins a clean drawing pass and gets the target-owned reusable draw context.</summary>
     /// <remarks>
     /// Reacquisition returns the same object after restoring its backend baseline and discarding
-    /// any unbalanced state left by the preceding acquisition.
+    /// any unbalanced state left by the preceding acquisition. This overload is
+    /// <see cref="GetContext(float)"/> at a render scale of one.
     /// </remarks>
-    IDrawContext2D GetContext();
+    IDrawContext2D GetContext() => GetContext(1f);
+
+    /// <summary>
+    /// Begins a clean drawing pass at the given physical-pixel scale and gets the target-owned
+    /// reusable draw context.
+    /// </summary>
+    /// <param name="renderScale">
+    /// The finite positive device-pixel scale to install as the pass baseline. It is reported by
+    /// <see cref="IDrawContext2D.RenderScale"/> and divided out of
+    /// <see cref="IDrawContext2D.Scale"/>, so a unit-sized path covers
+    /// <paramref name="renderScale"/> squared pixels.
+    /// </param>
+    /// <remarks>
+    /// Reacquisition returns the same object after restoring its backend baseline and discarding
+    /// any unbalanced state left by the preceding acquisition. The pass begins with the scale
+    /// installed as the engine transform; a render traverser replaces that transform per node
+    /// through <see cref="IDrawContext2D.SetEngineTransform"/>.
+    /// </remarks>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// <paramref name="renderScale"/> is not finite or is not positive.
+    /// </exception>
+    IDrawContext2D GetContext(float renderScale);
 
     /// <summary>Creates an immutable caller-owned snapshot of the target's current content.</summary>
     IImage Snapshot();
