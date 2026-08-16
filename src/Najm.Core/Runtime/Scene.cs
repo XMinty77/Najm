@@ -1,4 +1,6 @@
+using System.Numerics;
 using System.Runtime.ExceptionServices;
+using Najm.Utils;
 
 namespace Najm.Core;
 
@@ -11,12 +13,16 @@ namespace Najm.Core;
 /// </remarks>
 public class Scene
 {
+    private static readonly Vector2 DefaultVirtualResolution = new(1920f, 1080f);
+
     private readonly SceneRuntime runtime;
+    private readonly Vector2 virtualResolution = DefaultVirtualResolution;
     private SceneState state;
     private bool loadCompleted;
     private bool startCompleted;
     private bool stopAttempted;
     private bool unloadAttempted;
+    private bool isRendering;
     private long lastFrame = -1;
 
     /// <summary>Creates an unloaded scene with an empty layer stack.</summary>
@@ -28,6 +34,36 @@ public class Scene
 
     /// <summary>Gets this scene's controlled, add-ordered layer stack.</summary>
     public LayerStack Layers { get; }
+
+    /// <summary>
+    /// Gets the finite, positive size of this scene's virtual coordinate space. The default is
+    /// 1920 by 1080.
+    /// </summary>
+    /// <remarks>
+    /// A <see cref="ScreenLayer"/>'s coordinates are virtual coordinates outright, and a
+    /// <see cref="WorldLayer2D"/>'s camera frames its world against this size. Hosts scale virtual
+    /// space onto the output preserving aspect, so this one value drives rendering, pointer math,
+    /// and embedding identically.
+    /// </remarks>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// The value does not have finite, positive components.
+    /// </exception>
+    public Vector2 VirtualResolution
+    {
+        get => virtualResolution;
+        init
+        {
+            if (!float.IsFinite(value.X) || !float.IsFinite(value.Y) || value.X <= 0f || value.Y <= 0f)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(value),
+                    value,
+                    "A virtual resolution must have finite, positive components.");
+            }
+
+            virtualResolution = value;
+        }
+    }
 
     /// <summary>Advances one valid, strictly increasing simulation frame.</summary>
     public void Tick(in TickContext tick)
@@ -76,6 +112,79 @@ public class Scene
         {
             state = SceneState.Faulted;
             throw;
+        }
+    }
+
+    /// <summary>Renders the current scene state into a render target.</summary>
+    /// <param name="target">The target to paint this frame into.</param>
+    /// <remarks>
+    /// <para>
+    /// The pass is begun at a render scale derived from the target's size against
+    /// <see cref="VirtualResolution"/>, the surface is cleared to the bottom participating layer's
+    /// <see cref="Layer.ClearColor"/>, and every participating layer is then walked by
+    /// <see cref="RenderTraverser"/> in add order.
+    /// </para>
+    /// <para>
+    /// Rendering is idempotent: it does not mutate observable scene state, so one ticked frame can
+    /// be rendered any number of times and into any number of targets with identical results. It is
+    /// legal before the scene's first <see cref="Tick"/>, and therefore before a node's first
+    /// update.
+    /// </para>
+    /// </remarks>
+    /// <exception cref="ArgumentNullException"><paramref name="target"/> is null.</exception>
+    /// <exception cref="InvalidOperationException">
+    /// The scene is not loaded, a render is already in progress, or the target's size and the
+    /// virtual resolution do not yield a finite, positive render scale.
+    /// </exception>
+    public void Render(IRenderTarget target)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+        EnsureRenderable(nameof(Render));
+
+        var renderScale = ResolveRenderScale(target.Size);
+        isRendering = true;
+        try
+        {
+            var context = target.GetContext(renderScale);
+            context.Clear(BackgroundColor);
+            RenderTraverser.RenderLayers(Layers, context, virtualResolution, renderScale);
+        }
+        finally
+        {
+            isRendering = false;
+        }
+    }
+
+    /// <summary>Renders the current scene state into one already-begun draw context.</summary>
+    /// <param name="context">The borrowed context every layer paints into, in order.</param>
+    /// <remarks>
+    /// <para>
+    /// This is the direct path: no per-layer target is bound and no surface is cleared, so the
+    /// caller owns both the pass and whatever the context already holds. The render scale is the
+    /// one the context's pass was begun with, because
+    /// <see cref="IDrawContext2D.SetEngineTransform(in Matrix3x2)"/> replaces the pass baseline
+    /// wholesale and the traverser must therefore fold that scale back into every transform it
+    /// installs.
+    /// </para>
+    /// <para>Rendering is idempotent, exactly as <see cref="Render(IRenderTarget)"/> is.</para>
+    /// </remarks>
+    /// <exception cref="ArgumentNullException"><paramref name="context"/> is null.</exception>
+    /// <exception cref="InvalidOperationException">
+    /// The scene is not loaded or a render is already in progress.
+    /// </exception>
+    public void RenderDirect(IDrawContext2D context)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        EnsureRenderable(nameof(RenderDirect));
+
+        isRendering = true;
+        try
+        {
+            RenderTraverser.RenderLayers(Layers, context, virtualResolution, context.RenderScale);
+        }
+        finally
+        {
+            isRendering = false;
         }
     }
 
@@ -241,6 +350,63 @@ public class Scene
                 runtime.RequestRemoveLayer(layer),
             _ => throw InvalidTransition("Layers.Remove", state),
         };
+    }
+
+    /// <summary>
+    /// Gets the color a frame starts from: the bottom participating layer's
+    /// <see cref="Layer.ClearColor"/>, or transparent when no layer participates. A skipped layer
+    /// contributes nothing, its clear color included.
+    /// </summary>
+    private Color BackgroundColor
+    {
+        get
+        {
+            for (var index = 0; index < Layers.Count; index++)
+            {
+                var layer = Layers[index];
+                if (RenderTraverser.ParticipatesInRender(layer))
+                {
+                    return layer.ClearColor;
+                }
+            }
+
+            return Color.Transparent;
+        }
+    }
+
+    /// <summary>
+    /// Returns the virtual-to-device pixel scale for one output size: the largest uniform scale
+    /// that fits <see cref="VirtualResolution"/> inside it, matching the aspect-preserving letterbox
+    /// the host applies around the content rect.
+    /// </summary>
+    private float ResolveRenderScale(PixelSize size)
+    {
+        if (size.IsEmpty)
+        {
+            throw new InvalidOperationException("A render target must report a positive pixel size.");
+        }
+
+        var scale = MathF.Min(size.Width / virtualResolution.X, size.Height / virtualResolution.Y);
+        if (!float.IsFinite(scale) || scale <= 0f)
+        {
+            throw new InvalidOperationException(
+                $"A {size.Width}×{size.Height} target and a {virtualResolution.X}×{virtualResolution.Y} " +
+                "virtual resolution do not yield a finite, positive render scale.");
+        }
+
+        return scale;
+    }
+
+    private void EnsureRenderable(string operation)
+    {
+        if (state is not (SceneState.Loaded or SceneState.Started))
+        {
+            throw InvalidTransition(operation, state);
+        }
+        if (isRendering)
+        {
+            throw new InvalidOperationException("Scene rendering is not reentrant.");
+        }
     }
 
     private static InvalidOperationException InvalidTransition(string operation, SceneState current) =>
