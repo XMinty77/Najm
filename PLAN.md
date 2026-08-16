@@ -280,6 +280,16 @@ architecture edits supersede them:
    that records an atomic `VectorPicture`; `Najm.Text` does not depend on
    `CSharpMath.SkiaSharp` or SkiaSharp. Structured formula fragments remain a
    later enhancement behind the same portable run boundary.
+8. The M1 boundary follows this plan, not `ROADMAP.md`. `ROADMAP.md` places
+   desktop live preview, method-body hot reload, manual warm restart, and the
+   debug overlay inside M1; all four stay in phase 4. M1 is complete when the
+   headless golden loop, baseline text, and offline PNG and vector delivery
+   meet the phase 2 and phase 3 gates.
+
+   Consequence for verification: with no live preview, rendered PNG output is
+   the only way a change is seen. Acceptance stays visual by rendering
+   productions to PNG and inspecting them, and `SkiaExport.Png` is part of the
+   working loop rather than a delivery convenience.
 
 ## Current execution order
 
