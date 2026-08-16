@@ -18,6 +18,9 @@ public abstract class Node
     private Node? parent;
     private INodeMutationSink? mutationSink;
     private INodeMutationSink? reservationSink;
+    private int[]? paintOrder;
+    private bool paintOrderIsInsertion = true;
+    private bool paintOrderDirty = true;
 
     /// <summary>Gets this node's parent, or <see langword="null"/> while it is a root.</summary>
     public Node? Parent => parent;
@@ -91,6 +94,33 @@ public abstract class Node
     internal Node GetChild(int index) =>
         children is null ? throw new ArgumentOutOfRangeException(nameof(index)) : children[index];
 
+    /// <summary>
+    /// Returns the child at one position of this node's paint order: a stable sort of the
+    /// insertion order by <see cref="Node2D.ZIndex"/>, with equal keys retaining insertion order.
+    /// </summary>
+    /// <remarks>
+    /// The order is cached and rebuilt only after a child is added or removed or a child's paint
+    /// key changes. When every child shares one key, which is the common case, the cache resolves
+    /// to the insertion order itself and no index buffer is built, so warm traversal allocates
+    /// nothing.
+    /// </remarks>
+    internal Node GetChildInPaintOrder(int index)
+    {
+        EnsurePaintOrder();
+        if (paintOrderIsInsertion)
+        {
+            return GetChild(index);
+        }
+        if ((uint)index >= (uint)ChildCount)
+        {
+            throw new ArgumentOutOfRangeException(nameof(index));
+        }
+
+        return GetChild(paintOrder![index]);
+    }
+
+    internal void InvalidatePaintOrder() => paintOrderDirty = true;
+
     internal Behavior GetBehavior(int index) =>
         behaviors is null ? throw new ArgumentOutOfRangeException(nameof(index)) : behaviors[index];
 
@@ -100,6 +130,7 @@ public abstract class Node
 
         children ??= [];
         children.Add(child);
+        InvalidatePaintOrder();
 
         var previousParent = child.parent;
         child.parent = this;
@@ -121,6 +152,7 @@ public abstract class Node
         }
 
         children!.RemoveAt(index);
+        InvalidatePaintOrder();
         child.parent = null;
         child.SetMutationSinkRecursively(null);
         child.OnParentChanged(this, null);
@@ -188,6 +220,8 @@ public abstract class Node
 
     internal void InvokeUpdate(in TickContext tick) => Update(tick);
 
+    internal void InvokeRender(IDrawContext2D context) => Render(context);
+
     /// <summary>Runs when this node becomes attached to a loaded scene.</summary>
     protected virtual void OnAttach()
     {
@@ -203,8 +237,88 @@ public abstract class Node
     {
     }
 
+    /// <summary>Draws this node before its children. The default implementation draws nothing.</summary>
+    /// <param name="context">
+    /// The borrowed drawing surface, already carrying this node's resolved transform as installed
+    /// by the render traverser. All drawing is therefore expressed in this node's local
+    /// coordinates, and any transform pushed here composes below that one and must be balanced
+    /// before returning.
+    /// </param>
+    /// <remarks>
+    /// Render must not mutate observable scene state. It may not change transforms, properties, or
+    /// tree topology, and it may not queue structural edits. Rendering the same tick twice must
+    /// produce the same output, because the engine may render one ticked frame more than once.
+    /// </remarks>
+    public virtual void Render(IDrawContext2D context)
+    {
+    }
+
+    internal virtual int PaintOrderKey => 0;
+
     internal virtual void OnParentChanged(Node? previousParent, Node? currentParent)
     {
+    }
+
+    private void EnsurePaintOrder()
+    {
+        if (!paintOrderDirty)
+        {
+            return;
+        }
+
+        paintOrderDirty = false;
+
+        var count = ChildCount;
+        if (count < 2 || ChildrenSharePaintKey(count))
+        {
+            paintOrderIsInsertion = true;
+            return;
+        }
+
+        if (paintOrder is null || paintOrder.Length < count)
+        {
+            paintOrder = new int[count];
+        }
+
+        SortPaintOrder(paintOrder, count);
+        paintOrderIsInsertion = false;
+    }
+
+    private bool ChildrenSharePaintKey(int count)
+    {
+        var first = children![0].PaintOrderKey;
+        for (var index = 1; index < count; index++)
+        {
+            if (children[index].PaintOrderKey != first)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private void SortPaintOrder(int[] buffer, int count)
+    {
+        var list = children!;
+        for (var index = 0; index < count; index++)
+        {
+            buffer[index] = index;
+        }
+
+        for (var index = 1; index < count; index++)
+        {
+            var candidate = buffer[index];
+            var key = list[candidate].PaintOrderKey;
+            var position = index - 1;
+            while (position >= 0 && list[buffer[position]].PaintOrderKey > key)
+            {
+                buffer[position + 1] = buffer[position];
+                position--;
+            }
+
+            buffer[position + 1] = candidate;
+        }
     }
 
     private void ValidateAdd(Node child)

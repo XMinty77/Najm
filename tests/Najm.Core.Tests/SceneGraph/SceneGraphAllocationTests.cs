@@ -66,6 +66,64 @@ public sealed class SceneGraphAllocationTests
     }
 
     [TestMethod]
+    public void WarmEqualZIndexPaintOrderAllocatesNoManagedMemory()
+    {
+        var parent = new Node2D();
+        parent.Add(new Node2D());
+        parent.Add(new Node2D());
+        parent.Add(new Node2D());
+        var accumulator = 0;
+        for (var index = 0; index < parent.Children.Count; index++)
+        {
+            accumulator += parent.GetChildInPaintOrder(index) is Node2D ? 1 : 0;
+        }
+
+        var before = GC.GetAllocatedBytesForCurrentThread();
+
+        for (var iteration = 0; iteration < 1_000; iteration++)
+        {
+            for (var index = 0; index < parent.Children.Count; index++)
+            {
+                accumulator += parent.GetChildInPaintOrder(index) is Node2D ? 1 : 0;
+            }
+        }
+
+        var after = GC.GetAllocatedBytesForCurrentThread();
+
+        Assert.AreEqual(0L, after - before);
+        Assert.AreEqual(3_003, accumulator);
+    }
+
+    [TestMethod]
+    public void WarmMixedZIndexPaintOrderAllocatesNoManagedMemory()
+    {
+        var parent = new Node2D();
+        parent.Add(new Node2D { ZIndex = 2 });
+        parent.Add(new Node2D());
+        parent.Add(new Node2D { ZIndex = -1 });
+        var accumulator = 0;
+        for (var index = 0; index < parent.Children.Count; index++)
+        {
+            accumulator += parent.GetChildInPaintOrder(index) is Node2D ? 1 : 0;
+        }
+
+        var before = GC.GetAllocatedBytesForCurrentThread();
+
+        for (var iteration = 0; iteration < 1_000; iteration++)
+        {
+            for (var index = 0; index < parent.Children.Count; index++)
+            {
+                accumulator += parent.GetChildInPaintOrder(index) is Node2D ? 1 : 0;
+            }
+        }
+
+        var after = GC.GetAllocatedBytesForCurrentThread();
+
+        Assert.AreEqual(0L, after - before);
+        Assert.AreEqual(3_003, accumulator);
+    }
+
+    [TestMethod]
     public void WarmConcreteChildrenForeachAllocatesNoManagedMemory()
     {
         var parent = new Node2D();
