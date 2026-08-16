@@ -209,6 +209,42 @@ one-argument form is not.
 
 ---
 
+## 8. Fast math preconditions the reference does not state
+
+Two obligations found by executing the `CSharpMath.Rendering` spike (see the
+resolved dependency conflict below). Neither appears in `NAJM-TEXT.md`, and both
+produce output that renders and looks approximately right while being
+measurably wrong — the failure mode a low-resolution golden waves through.
+
+**CFF glyph bounds must be primed.** Latin Modern Math is a CFF/OTTO font, and
+`OpenFontReader.Read()` leaves every glyph's `Bounds` at `[0,0,0,0]`. CSharpMath
+measures through `GlyphBoundsProvider.GetBoundingRectsForGlyphs`, which reads
+exactly those bounds, so handing it Najm's bytes unprimed yields plausible but
+wrong metrics. For `\frac{a}{b}` the ascent came out 18.053 instead of 29.840;
+for `\sqrt{\frac{x+1}{y^2}}` the radical selected a *different vertical variant*,
+so the outline stream itself differed. It is deterministic, so it never presents
+as flakiness.
+
+The fix is one call per face at load: `typeface.UpdateAllCffGlyphBounds()`
+(`Typography.OpenFont.Extensions`), about 32 ms for LM Math's 4802 glyphs. After
+it, measurements and the full recorded command stream are byte-identical to
+CSharpMath's own bundled-font path. This belongs in the `CS-R#` check registry
+with a first-use assertion that a known glyph's bounds are non-zero, and its
+cost belongs in the load-phase budget, never the frame path.
+
+**The Y flip is Najm's to own.** `GraphicsContext` does not flip Y. Driving
+`Typesetter.CreateLine` directly — the II.6 route — yields a mathematical,
+up-positive axis: in `\frac{a}{b}` the numerator sits at `dy = +18.053` and the
+denominator at `dy = -18.293`. Only `MathPainter.Draw` emits the `Scale(1,-1)`.
+Najm's portable canvas must apply the flip explicitly or bake it into the
+`VectorPicture` transform, and it must compose correctly with the upright rule
+(NAJM-TEXT I.9), which is a separate flip at the layer.
+
+**Status:** Open — recorded before Fast math is built, so neither is
+rediscovered by debugging wrong output.
+
+---
+
 ## Documentation conflicts
 
 Places where the reference set disagrees with itself. Recorded so the
@@ -255,12 +291,44 @@ edits supersede them", and the implemented `Najm.Text.csproj` follows it —
 HarfBuzzSharp and Najm.Core only, no SkiaSharp. The architecture test's
 allowlist already anticipates `CSharpMath`/`CSharpMath.Rendering`.
 
-Unresolved consequence: `CSharpMath` and `CSharpMath.Rendering` are pinned in
-`Directory.Packages.props` and allowlisted by the architecture test, but no
-project references either, and no compatibility spike has been run. `PLAN.md`
-Phase 1 required that spike, and resolution 7's whole approach depends on
-`CSharpMath.Rendering` exposing a canvas seam Najm can implement portably.
-That assumption is currently unverified.
+**Resolved in favour of `PLAN.md` resolution 7**, by executing the Phase 1
+compatibility spike that had never been run. `NAJM-TEXT.md` §0 and
+`ARCHITECTURE.md` §16 are wrong on this point and are superseded.
+
+Evidence, from a throwaway console app referencing only `CSharpMath` and
+`CSharpMath.Rendering` at the pinned 1.0.0-pre.1:
+
+- The backend-agnostic seam exists: `CSharpMath.Rendering.FrontEnd.ICanvas`
+  (lines, rects, save/restore, translate/scale, colour and paint style) and the
+  abstract `FrontEnd.Path` (`MoveTo`, `LineTo`, `Curve3`, `Curve4`,
+  `CloseContour`). Its entire vocabulary is `System.Drawing.Color`/`PointF`/
+  `RectangleF`. There is no image or raster command in `ICanvas` at all, so
+  resolution 7's "atomic `VectorPicture`" is not merely possible — it is the
+  only thing the API can emit.
+- No SkiaSharp anywhere. `CSharpMath.Rendering`'s assembly references are
+  `CSharpMath`, `netstandard`, `System.Memory`, `System.Numerics.Vectors`. The
+  spike's build output was three DLLs and no `runtimes/` directory. A runtime
+  check confirmed no assembly with "Skia" in its name ever loaded.
+  `CSharpMath.SkiaSharp` is an 11 KB wrapper Najm can write itself.
+- Raw OTF bytes work. `Typography.OpenFont` is ILMerged into
+  `CSharpMath.Rendering`, so `new OpenFontReader().Read(stream)` over Najm's
+  bundled `latinmodern-math.otf` yields the face directly — 4802 glyphs, MATH
+  table present. Glyph-id identity (CS-R1) holds exactly: `a`/`x`/`√` resolve to
+  66/89/3077 through both CSharpMath and Najm's own lookup.
+- Real LaTeX round-trips to vector commands: `\frac{a}{b}` records 93 commands
+  including the fraction rule as a `DrawLine`; `|\psi_{2,1,0}|^{2}` records 229.
+
+Two API details II.6's prose gets wrong: `Result<T>` has no `.Value` — deconstruct
+it (`var (list, error) = LaTeXParser.MathListFromLaTeX(s);`). And the parser is
+lenient, so "fail loud with CSharpMath's message" is not always available:
+`\frac{a}` succeeds as `\frac{a}{}` with a null error. Najm needs its own
+validation pass if silent LaTeX repair is unacceptable.
+
+One determinism caveat: `CSharpMath.Rendering` embeds three reference fonts in a
+**static** registry, and `Fonts(local, size)` can only prepend overrides, never
+remove the globals. A glyph missing from Najm's face silently falls back to
+CSharpMath's embedded copy. "Pinned font bytes" in the §2.2 reproducibility
+posture therefore means Najm's bytes *plus* the package's.
 
 ### Direct-path bracket predicate
 
