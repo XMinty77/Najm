@@ -204,6 +204,13 @@ public sealed class SceneRenderPipelineTests
     [TestMethod]
     public void ALayerThatCannotContributeIsNotCleared_NotWalked_AndDoesNotRunItsHooks()
     {
+        // COVERS THE TRANSITIONAL NO-COMPOSITOR PATH. See docsref/DEVIATIONS.md entry 10: this
+        // scene renders blue under the compositor, because an upper layer's opaque ClearColor is
+        // content that merges over everything beneath it. The fallback path instead takes the
+        // background from the bottom participating layer, which is what the green expectation
+        // below encodes. When SceneEnvironment lands and the fallback goes away, that expectation
+        // becomes blue. LayerCompositionTests covers the composited reading today.
+        //
         // The bottom layer would clear the frame red and paint it green; the layer above it clears
         // blue and paints nothing. While the bottom layer cannot contribute, the frame is blue.
         var scene = new Scene { VirtualResolution = new Vector2(4f, 2f) };

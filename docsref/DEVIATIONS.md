@@ -275,6 +275,44 @@ budget for no benefit, since a stable-size texture keeps its id.
 
 ---
 
+## 10. `Scene.Render` currently has two semantics
+
+**Docs:** §4.1 gives `Scene.Render(IRenderTarget)` one meaning — delegate to the compositor
+acquired at `Load`. `Load` takes a `SceneEnvironment`, which supplies the provider.
+
+**Current state:** `SceneEnvironment` does not exist yet, so `Load` gained a transitional
+`internal void Load(ISurfaceProvider?)` and `Render` falls back to a single-context traverser
+walk when no provider was supplied. The two paths do **not** agree, and the disagreement is
+observable:
+
+- **Composited path (correct):** every participating layer's `ClearColor` is content. A layer
+  that draws nothing but clears opaque blue still merges opaque blue over everything beneath
+  it, exactly as NAJM-COMPOSITOR requires — "a layer whose root subtree culls to nothing still
+  binds and clears (its `ClearColor` is content)".
+- **Fallback path:** the frame background is the *bottom* participating layer's `ClearColor`
+  and upper layers' clear colors are ignored entirely.
+
+`SceneRenderPipelineTests.ALayerThatCannotContributeIsNotCleared_NotWalked_AndDoesNotRunItsHooks`
+asserts the fallback reading (green where the compositor correctly produces blue). It is
+green-lit only because it exercises the fallback. The composited reading is separately covered
+in `LayerCompositionTests`.
+
+**Decision:** keep the fallback until `SceneEnvironment` lands, then delete it — `Load` will
+always carry a provider, `Render` will always composite, and that test's expectation changes to
+blue. `RenderDirect` remains the only other path, and it needs its own answer for `ClearColor`,
+which the reference never states for the direct path: paint each participating layer's clear as
+a viewport-covering fill before its tree, which reproduces composited semantics for the
+`SrcOver` content M1 allows.
+
+**Why not converge now:** the fallback is the only reason ~20 existing tests can call
+`Load()` without a provider. Converging is a mechanical change to how those tests load a scene
+plus one expectation flip, and it belongs with the `SceneEnvironment` slice that removes the
+need for it, not bolted onto the compositor slice.
+
+**Status:** Open — a known, tested divergence with a scheduled removal, not an accident.
+
+---
+
 ## Documentation conflicts
 
 Places where the reference set disagrees with itself. Recorded so the
