@@ -49,6 +49,7 @@ public sealed class SkiaDrawContext2D : IDrawContext2D
     private readonly Dictionary<CoreBrush, SKShader> shaderCache = [];
     private readonly Dictionary<CoreStrokeDash, SKPathEffect> dashCache = [];
     private StateKind[] stateStack = new StateKind[InitialStateCapacity];
+    private Matrix3x2 deviceOffset = Matrix3x2.Identity;
     private RenderCaps caps;
     private float renderScale;
     private int stateDepth;
@@ -168,7 +169,9 @@ public sealed class SkiaDrawContext2D : IDrawContext2D
     /// The canvas matrix is replaced with <paramref name="engineToDevice"/> at the pass baseline
     /// save slot, so the save count the pass was begun with is preserved and ending the pass still
     /// restores the surface exactly. Requiring an empty author stack makes the balancing rule
-    /// structural instead of a debug-only assertion.
+    /// structural instead of a debug-only assertion. A pass begun on a surface that holds an offset
+    /// sub-rectangle of the frame composes its device offset below this transform; a full-frame pass
+    /// has none and installs exactly what it is handed.
     /// </remarks>
     public void SetEngineTransform(in Matrix3x2 engineToDevice)
     {
@@ -291,7 +294,27 @@ public sealed class SkiaDrawContext2D : IDrawContext2D
     internal void BeginPass(
         float renderScale,
         RenderCaps caps,
-        in Matrix3x2 engineBaseTransform)
+        in Matrix3x2 engineBaseTransform) =>
+        BeginPass(renderScale, caps, engineBaseTransform, Matrix3x2.Identity);
+
+    /// <summary>
+    /// Begins a pass whose surface holds a sub-rectangle of the frame, offset from the frame origin.
+    /// </summary>
+    /// <param name="renderScale">The finite positive device-pixel scale stamped on the pass.</param>
+    /// <param name="caps">The capabilities the pass advertises.</param>
+    /// <param name="engineBaseTransform">The engine transform installed as the pass baseline.</param>
+    /// <param name="deviceOffset">
+    /// The frame-to-surface mapping composed <em>below</em> every engine transform installed during
+    /// this pass, including the ones the render traverser sets per node. A layer that occupies a
+    /// viewport renders through the same absolute frame-device transforms as a full-frame layer and
+    /// this translation brings the viewport's device origin to the surface's origin, so the surface
+    /// holds the frame's pixels 1:1 and the compositor's merge is a pure placement.
+    /// </param>
+    internal void BeginPass(
+        float renderScale,
+        RenderCaps caps,
+        in Matrix3x2 engineBaseTransform,
+        in Matrix3x2 deviceOffset)
     {
         EnsureNotDisposed();
         if (!float.IsFinite(renderScale) || renderScale <= 0f)
@@ -311,8 +334,12 @@ public sealed class SkiaDrawContext2D : IDrawContext2D
                 nameof(caps));
         }
         EnsureFiniteMatrix(engineBaseTransform, nameof(engineBaseTransform));
+        EnsureFiniteMatrix(deviceOffset, nameof(deviceOffset));
 
+        // Every argument is validated before any field moves, so a rejected stamp cannot disturb an
+        // already active pass.
         ResetToBaseline();
+        this.deviceOffset = deviceOffset;
         var saveCount = canvas.SaveCount;
         try
         {
@@ -347,6 +374,22 @@ public sealed class SkiaDrawContext2D : IDrawContext2D
             throw new InvalidOperationException(
                 $"The render pass ended with {unbalancedStateCount} unbalanced context state push(es); baseline state was restored.");
         }
+    }
+
+    /// <summary>
+    /// Abandons any active pass and returns the canvas to the state it was constructed in.
+    /// </summary>
+    /// <remarks>
+    /// A compositor draws surface to surface on the bare canvas, outside any pass, and must know
+    /// that no engine transform, clip, or unbalanced author state is installed when it does.
+    /// Unlike <see cref="EndPass"/> this reports nothing and demands nothing: it is a recovery, not
+    /// a contract check.
+    /// </remarks>
+    internal void RestoreBaseline()
+    {
+        EnsureNotDisposed();
+        ResetToBaseline();
+        deviceOffset = Matrix3x2.Identity;
     }
 
     internal void DisposeOwnedResources()
@@ -565,9 +608,15 @@ public sealed class SkiaDrawContext2D : IDrawContext2D
     /// Reinstalls the engine transform on the pass's own save slot, above the surface baseline and
     /// below every author push. The caller guarantees the author stack is empty.
     /// </summary>
+    /// <remarks>
+    /// The pass's device offset composes below the engine transform — row vectors, so a point is
+    /// mapped to frame device pixels first and shifted onto this surface second. The offset is
+    /// identity for a surface that is the frame, and composing with the identity is exact, so a
+    /// full-frame pass installs precisely the matrix it was handed.
+    /// </remarks>
     private void InstallEngineTransform(in Matrix3x2 engineToDevice)
     {
-        var nativeTransform = ToSkiaMatrix(engineToDevice);
+        var nativeTransform = ToSkiaMatrix(engineToDevice * deviceOffset);
         if (canvas.SaveCount > baseSaveCount)
         {
             canvas.RestoreToCount(baseSaveCount);
@@ -664,7 +713,8 @@ public sealed class SkiaDrawContext2D : IDrawContext2D
         _ => throw new ArgumentOutOfRangeException(nameof(spread), "The spread mode is not supported."),
     };
 
-    private static SKBlendMode ToSkiaBlendMode(CoreBlendMode blendMode) => blendMode switch
+    /// <summary>Lowers one portable blend mode, shared with the compositor's merge paint.</summary>
+    internal static SKBlendMode ToSkiaBlendMode(CoreBlendMode blendMode) => blendMode switch
     {
         CoreBlendMode.SrcOver => SKBlendMode.SrcOver,
         CoreBlendMode.Multiply => SKBlendMode.Multiply,

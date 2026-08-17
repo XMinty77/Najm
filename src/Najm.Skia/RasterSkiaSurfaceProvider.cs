@@ -25,12 +25,7 @@ public sealed class RasterSkiaSurfaceProvider : ISurfaceProvider
             CoreColorSpace.LinearSrgb => SKColorSpace.CreateSrgbLinear(),
             _ => throw new ArgumentOutOfRangeException(nameof(spec), "The color-space tag is not supported."),
         };
-        var colorType = normalizedSpec.ColorSpace switch
-        {
-            CoreColorSpace.Srgb => SKColorType.Rgba8888,
-            CoreColorSpace.LinearSrgb => SKColorType.RgbaF16,
-            _ => throw new ArgumentOutOfRangeException(nameof(spec), "The color-space tag is not supported."),
-        };
+        var colorType = ResolveColorType(normalizedSpec.ColorSpace, nameof(spec));
         var imageInfo = new SKImageInfo(
             normalizedSpec.Width,
             normalizedSpec.Height,
@@ -52,6 +47,34 @@ public sealed class RasterSkiaSurfaceProvider : ISurfaceProvider
             throw;
         }
     }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// The returned <see cref="SkiaCompositor"/> creates its layer targets and accumulation surface
+    /// through this provider, so every surface a frame touches comes from one authority. It is
+    /// caller-owned — in practice scene-owned — and must be disposed before the provider.
+    /// </remarks>
+    public ICompositor CreateCompositor()
+    {
+        ObjectDisposedException.ThrowIf(disposed, this);
+        return new SkiaCompositor(this);
+    }
+
+    /// <summary>Maps one portable color-space tag onto the raster color type that carries it.</summary>
+    /// <remarks>
+    /// Shared with the compositor's memory accounting so the byte estimate and the allocation
+    /// cannot describe different pixels.
+    /// </remarks>
+    /// <param name="colorSpace">The mandatory color-space tag.</param>
+    /// <param name="parameterName">The caller's parameter name, for a faithful exception.</param>
+    /// <exception cref="ArgumentOutOfRangeException">The tag has no raster realization.</exception>
+    internal static SKColorType ResolveColorType(CoreColorSpace colorSpace, string parameterName) =>
+        colorSpace switch
+        {
+            CoreColorSpace.Srgb => SKColorType.Rgba8888,
+            CoreColorSpace.LinearSrgb => SKColorType.RgbaF16,
+            _ => throw new ArgumentOutOfRangeException(parameterName, "The color-space tag is not supported."),
+        };
 
     /// <summary>Marks the provider closed to new target creation.</summary>
     /// <remarks>

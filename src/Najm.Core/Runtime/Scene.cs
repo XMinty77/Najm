@@ -17,6 +17,7 @@ public class Scene
 
     private readonly SceneRuntime runtime;
     private readonly Vector2 virtualResolution = DefaultVirtualResolution;
+    private ICompositor? compositor;
     private SceneState state;
     private bool loadCompleted;
     private bool startCompleted;
@@ -119,10 +120,19 @@ public class Scene
     /// <param name="target">The target to paint this frame into.</param>
     /// <remarks>
     /// <para>
-    /// The pass is begun at a render scale derived from the target's size against
-    /// <see cref="VirtualResolution"/>, the surface is cleared to the bottom participating layer's
-    /// <see cref="Layer.ClearColor"/>, and every participating layer is then walked by
-    /// <see cref="RenderTraverser"/> in add order.
+    /// This is the composited path. The render scale is derived from the target's size against
+    /// <see cref="VirtualResolution"/>, and the frame is handed to the <see cref="ICompositor"/>
+    /// acquired at load, which stages each layer through its own target and merges it with the
+    /// layer's <see cref="Layer.Opacity"/>, <see cref="Layer.Blend"/>, and
+    /// <see cref="Layer.Viewport"/>.
+    /// </para>
+    /// <para>
+    /// A scene loaded without a composition authority has no compositor, and this method falls back
+    /// to a single-context walk: the surface is cleared to the bottom participating layer's
+    /// <see cref="Layer.ClearColor"/> and every participating layer is walked by
+    /// <see cref="RenderTraverser"/> into that one context. The fallback cannot honor per-layer
+    /// presentation, which is precisely what the compositor exists to apply, so a host that cares
+    /// about layer composition supplies a surface provider at load.
     /// </para>
     /// <para>
     /// Rendering is idempotent: it does not mutate observable scene state, so one ticked frame can
@@ -145,6 +155,12 @@ public class Scene
         isRendering = true;
         try
         {
+            if (compositor is not null)
+            {
+                compositor.Render(Layers, target, virtualResolution, renderScale);
+                return;
+            }
+
             var context = target.GetContext(renderScale);
             context.Clear(BackgroundColor);
             RenderTraverser.RenderLayers(Layers, context, virtualResolution, renderScale);
@@ -212,7 +228,21 @@ public class Scene
 
     internal NodeRegistry Registry => runtime.Registry;
 
-    internal void Load()
+    internal ICompositor? Compositor => compositor;
+
+    internal void Load() => Load(surfaces: null);
+
+    /// <summary>
+    /// Loads the scene, binding the backend's composition authority before author load code runs.
+    /// </summary>
+    /// <param name="surfaces">
+    /// The backend surface provider this scene composites through, or null for a scene with no
+    /// composition authority — <see cref="Render(IRenderTarget)"/> then takes its single-context
+    /// fallback. This parameter stands in for the environment binding until the closed capability
+    /// set exists; the compositor is acquired from it exactly as it will be from
+    /// <c>env.Surfaces</c>.
+    /// </param>
+    internal void Load(ISurfaceProvider? surfaces)
     {
         if (state != SceneState.Constructed)
         {
@@ -223,6 +253,7 @@ public class Scene
         state = SceneState.Loading;
         try
         {
+            compositor = surfaces?.CreateCompositor();
             runtime.AttachExistingLayers();
             OnLoad();
             loadCompleted = true;
@@ -231,8 +262,9 @@ public class Scene
         catch (Exception original)
         {
             var cleanup = runtime.RollbackLoad(snapshot);
+            var disposal = ReleaseComposition();
             state = SceneState.Faulted;
-            ThrowCombined(original, cleanup);
+            ThrowCombined(original, disposal is null ? cleanup : Append(cleanup, disposal));
             throw;
         }
     }
@@ -314,6 +346,12 @@ public class Scene
         finally
         {
             failures.AddRange(runtime.DetachAllLayers());
+            var disposal = ReleaseComposition();
+            if (disposal is not null)
+            {
+                failures.Add(disposal);
+            }
+
             runtime.AbandonMutations();
             state = SceneState.Unloaded;
         }
@@ -407,6 +445,39 @@ public class Scene
         {
             throw new InvalidOperationException("Scene rendering is not reentrant.");
         }
+    }
+
+    /// <summary>
+    /// Disposes the acquired compositor at most once, releasing every layer target and the
+    /// accumulation surface it owns, and returns a disposal failure instead of throwing so scene
+    /// teardown can report it beside the other cleanup failures.
+    /// </summary>
+    private Exception? ReleaseComposition()
+    {
+        var owned = compositor;
+        compositor = null;
+        if (owned is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            owned.Dispose();
+            return null;
+        }
+        catch (Exception exception)
+        {
+            return exception;
+        }
+    }
+
+    private static IReadOnlyList<Exception> Append(IReadOnlyList<Exception> failures, Exception added)
+    {
+        var combined = new List<Exception>(failures.Count + 1);
+        combined.AddRange(failures);
+        combined.Add(added);
+        return combined;
     }
 
     private static InvalidOperationException InvalidTransition(string operation, SceneState current) =>

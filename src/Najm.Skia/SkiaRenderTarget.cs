@@ -8,6 +8,7 @@ namespace Najm.Skia;
 public sealed class SkiaRenderTarget : IRenderTarget
 {
     private SKSurface? surface;
+    private SKCanvas? canvas;
     private SkiaDrawContext2D? context;
 
     internal SkiaRenderTarget(SKSurface surface, SurfaceSpec surfaceSpec)
@@ -15,7 +16,13 @@ public sealed class SkiaRenderTarget : IRenderTarget
         this.surface = surface ?? throw new ArgumentNullException(nameof(surface));
         SurfaceSpec = surfaceSpec;
         Size = surfaceSpec.Size;
-        context = new SkiaDrawContext2D(surface.Canvas, surfaceSpec);
+
+        // Held for the target's lifetime deliberately. SkiaSharp caches the managed canvas wrapper
+        // for a native surface weakly, so re-reading SKSurface.Canvas allocates a fresh wrapper
+        // whenever a collection has swept the old one — an allocation in the middle of a warm
+        // render loop, arriving only after a GC and therefore only intermittently.
+        canvas = surface.Canvas;
+        context = new SkiaDrawContext2D(canvas, surfaceSpec);
     }
 
     /// <inheritdoc />
@@ -65,6 +72,59 @@ public sealed class SkiaRenderTarget : IRenderTarget
         return context;
     }
 
+    /// <summary>
+    /// Begins a clean pass on a surface that holds one offset sub-rectangle of the frame.
+    /// </summary>
+    /// <remarks>
+    /// The compositor uses this for a layer that occupies a viewport: the traverser installs
+    /// absolute frame-device transforms either way, and <paramref name="deviceOffset"/> brings the
+    /// viewport's device origin onto this surface's origin.
+    /// </remarks>
+    internal SkiaDrawContext2D BeginPass(
+        float renderScale,
+        RenderCaps caps,
+        in Matrix3x2 engineBaseTransform,
+        in Matrix3x2 deviceOffset)
+    {
+        ObjectDisposedException.ThrowIf(surface is null, this);
+        context!.BeginPass(renderScale, caps, engineBaseTransform, deviceOffset);
+        return context;
+    }
+
+    /// <summary>
+    /// Gets the owned native surface, for the compositor's surface-to-surface draws.
+    /// </summary>
+    /// <remarks>
+    /// Reading a surface this way is what keeps the compositor free of <see cref="Snapshot"/>: a
+    /// surface that is still being written this frame is drawn from directly, never copied into an
+    /// image first.
+    /// </remarks>
+    internal SKSurface NativeSurface
+    {
+        get
+        {
+            ObjectDisposedException.ThrowIf(surface is null, this);
+            return surface;
+        }
+    }
+
+    /// <summary>Gets the owned surface's canvas at whatever state the current pass left it in.</summary>
+    internal SKCanvas NativeCanvas
+    {
+        get
+        {
+            ObjectDisposedException.ThrowIf(canvas is null, this);
+            return canvas;
+        }
+    }
+
+    /// <summary>Abandons any active pass and restores the canvas to its surface baseline.</summary>
+    internal void RestoreBaseline()
+    {
+        ObjectDisposedException.ThrowIf(surface is null, this);
+        context!.RestoreBaseline();
+    }
+
     /// <summary>Ends the active pass, restoring baseline before reporting unbalanced state.</summary>
     internal void EndPass()
     {
@@ -79,6 +139,9 @@ public sealed class SkiaRenderTarget : IRenderTarget
         var ownedSurface = surface;
         context = null;
         surface = null;
+
+        // The canvas belongs to the surface and is released with it, never disposed separately.
+        canvas = null;
 
         try
         {
