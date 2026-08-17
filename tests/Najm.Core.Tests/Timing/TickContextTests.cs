@@ -32,18 +32,20 @@ public sealed class TickContextTests
     {
         var time = FixedStepTiming.Tick(0L, 60d);
         var accumulator = new TickContext(time).Time.Elapsed;
-        var before = GC.GetAllocatedBytesForCurrentThread();
+        var constructions = 0;
 
-        for (var iteration = 0; iteration < 10_000; iteration++)
-        {
-            var context = new TickContext(time, InputBlock.Empty);
-            accumulator += context.Time.Elapsed;
-            _ = context.Input;
-        }
+        var reading = AllocationProbe.AssertNoneAllocated(
+            10_000,
+            () =>
+            {
+                var context = new TickContext(time, InputBlock.Empty);
+                accumulator += context.Time.Elapsed;
+                _ = context.Input;
+                constructions++;
+            },
+            "Tick context construction and reads");
 
-        var after = GC.GetAllocatedBytesForCurrentThread();
-
-        Assert.AreEqual(0L, after - before);
+        Assert.AreEqual(reading.Invocations, constructions);
         Assert.IsGreaterThan(0d, accumulator);
     }
 }

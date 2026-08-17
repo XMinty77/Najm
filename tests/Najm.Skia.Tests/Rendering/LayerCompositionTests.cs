@@ -511,23 +511,17 @@ public sealed class LayerCompositionTests
             scene.Render(target);
         }
 
-        // Collect first, deliberately. A collection retires the runtime's weakly held caches — the
-        // reflection metadata behind an enum validation, a backend's managed wrapper for a native
-        // object — so the frame straight after one is the frame that reveals a per-frame allocation
-        // hiding behind a cache hit. Measuring without it makes the whole assertion depend on
-        // whether a collection happens to land inside the window.
-        const int measuredRenders = 2_000;
-        GC.Collect();
-        GC.WaitForPendingFinalizers();
-        GC.Collect();
-        var before = GC.GetAllocatedBytesForCurrentThread();
-        for (var render = 0; render < measuredRenders; render++)
-        {
-            scene.Render(target);
-        }
-        var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+        // The probe collects deliberately. A collection retires the runtime's weakly held caches —
+        // the reflection metadata behind an enum validation, a backend's managed wrapper for a
+        // native object — so the frame straight after one is the frame that reveals a per-frame
+        // allocation hiding behind a cache hit. It then settles before the baseline, so that
+        // repopulation is not itself mistaken for per-frame cost.
+        AllocationProbe.AssertNoneAllocated(
+            2_000,
+            () => scene.Render(target),
+            "The warm composited render loop");
 
-        Assert.AreEqual(0L, allocated, $"The warm composited render loop allocated {allocated} managed bytes.");
+        // Per-frame counts, so they are unaffected by however many frames the probe ran.
         Assert.AreEqual(3, Stats(scene).MergeCount);
         Assert.AreEqual(0, Stats(scene).TargetAcquisitionCount);
     }

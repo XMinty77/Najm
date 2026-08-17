@@ -197,25 +197,22 @@ internal sealed class FailingFrameSink : IFrameSink, IDisposable
 /// <remarks>
 /// <para>
 /// The measurement is taken from inside the loop because a render owns its scene's whole life: the
-/// warm frames and the measured frames have to belong to the same run.
-/// </para>
-/// <para>
-/// A collection is forced during the warm-up, well before the baseline, so lazily populated runtime
-/// caches are rebuilt inside the warm-up rather than mistaken for per-frame cost. It is deliberately
-/// not the last thing before the baseline: <see cref="GC.Collect()"/> charges the calling thread a
-/// fixed 248 bytes of its own bookkeeping to the next window, which is a constant regardless of loop
-/// length and has nothing to do with the loop. <see cref="SettleFrames"/> frames separate the two so
-/// that constant lands in the warm-up where it belongs.
+/// warm frames and the measured frames have to belong to the same run. That rules out
+/// <see cref="AllocationProbe.Measure"/>, which drives the body itself, so this sink runs the same
+/// protocol by hand around an <see cref="AllocationProbe.Window"/>: collect at
+/// <see cref="AllocationProbe.SettleIterations"/> frames before the baseline, so the frame that
+/// repopulates a dropped cache falls in the warm-up rather than in the window, and report whether a
+/// collection landed inside the window anyway. See <see cref="AllocationProbe"/> for why both halves
+/// of that are needed. A caller retries a disturbed reading with
+/// <see cref="AllocationProbe.MeasureUntilUndisturbed"/>, which is why the whole run is cheap to
+/// repeat.
 /// </para>
 /// </remarks>
 internal sealed class AllocationProbeSink : IFrameSink
 {
-    /// <summary>Frames between the forced collection and the baseline reading.</summary>
-    private const long SettleFrames = 8L;
-
     private readonly long warmFrames;
     private readonly long totalFrames;
-    private long baseline;
+    private readonly AllocationProbe.Window window = new();
 
     internal AllocationProbeSink(long warmFrames, long totalFrames)
     {
@@ -223,7 +220,8 @@ internal sealed class AllocationProbeSink : IFrameSink
         this.totalFrames = totalFrames;
     }
 
-    internal long AllocatedBytes { get; private set; } = -1L;
+    /// <summary>The window's reading, once the run has finished.</summary>
+    internal AllocationProbe.Sample Sample => window.ToSample();
 
     internal long MeasuredFrames { get; private set; }
 
@@ -235,19 +233,17 @@ internal sealed class AllocationProbeSink : IFrameSink
     {
         pixels.Dispose();
 
-        if (frame == warmFrames - 1L - SettleFrames)
+        if (frame == warmFrames - 1L - AllocationProbe.SettleIterations)
         {
-            GC.Collect();
-            GC.WaitForPendingFinalizers();
-            GC.Collect();
+            AllocationProbe.ForceCollection();
         }
         else if (frame == warmFrames - 1L)
         {
-            baseline = GC.GetAllocatedBytesForCurrentThread();
+            window.Open();
         }
         else if (frame == totalFrames - 1L)
         {
-            AllocatedBytes = GC.GetAllocatedBytesForCurrentThread() - baseline;
+            window.Close();
             MeasuredFrames = totalFrames - warmFrames;
         }
     }

@@ -77,17 +77,18 @@ public sealed class FrameClockTests
         var fixedClock = new FrameClock(ClockPolicy.Fixed(60d));
         var liveClock = new FrameClock(ClockPolicy.Live(0.1d));
         var accumulator = fixedClock.Advance().Elapsed + liveClock.Advance(0.01d).Elapsed;
-        var before = GC.GetAllocatedBytesForCurrentThread();
 
-        for (var iteration = 0; iteration < 100_000; iteration++)
-        {
-            accumulator += fixedClock.Advance().Elapsed;
-            accumulator += liveClock.Advance(0.01d).Elapsed;
-        }
+        var reading = AllocationProbe.AssertNoneAllocated(
+            100_000,
+            () =>
+            {
+                accumulator += fixedClock.Advance().Elapsed;
+                accumulator += liveClock.Advance(0.01d).Elapsed;
+            },
+            "One hundred thousand warm clock advances");
 
-        var after = GC.GetAllocatedBytesForCurrentThread();
-
-        Assert.AreEqual(0L, after - before);
+        Assert.AreEqual(reading.Invocations + 1L, fixedClock.Advance().Frame);
+        Assert.AreEqual(reading.Invocations + 1L, liveClock.Advance(0.01d).Frame);
         Assert.IsGreaterThan(0d, accumulator);
     }
 

@@ -20,22 +20,24 @@ public sealed class RuntimeAllocationTests
             scene.Tick(tick);
         }
 
-        const int measuredTicks = 100_000;
-        var before = GC.GetAllocatedBytesForCurrentThread();
+        // The probe runs the body extra times — warm, settle, and once more per retried window — so
+        // the tick count the counters must match is the probe's own total, not a constant.
+        var ticked = warmTicks;
+        var reading = AllocationProbe.AssertNoneAllocated(
+            100_000,
+            () =>
+            {
+                var tick = RuntimeTicks.At(ticked);
+                scene.Tick(tick);
+                ticked++;
+            },
+            "The warm clean traversal");
 
-        for (var frame = warmTicks; frame < warmTicks + measuredTicks; frame++)
-        {
-            var tick = RuntimeTicks.At(frame);
-            scene.Tick(tick);
-        }
-
-        var after = GC.GetAllocatedBytesForCurrentThread();
-
-        Assert.AreEqual(0L, after - before);
-        Assert.AreEqual(warmTicks + measuredTicks, layer.UpdateCount);
-        Assert.AreEqual(warmTicks + measuredTicks, parent.UpdateCount);
-        Assert.AreEqual(warmTicks + measuredTicks, child.UpdateCount);
-        Assert.AreEqual(warmTicks + measuredTicks, behavior.UpdateCount);
+        Assert.AreEqual(warmTicks + reading.Invocations, ticked);
+        Assert.AreEqual(ticked, layer.UpdateCount);
+        Assert.AreEqual(ticked, parent.UpdateCount);
+        Assert.AreEqual(ticked, child.UpdateCount);
+        Assert.AreEqual(ticked, behavior.UpdateCount);
     }
 
     private sealed class CountingLayer : ScreenLayer

@@ -303,21 +303,35 @@ public sealed class OfflineRendererTests
         const long WarmFrames = 64L;
         const long TotalFrames = 1_064L;
 
-        var scene = new CountingScene { VirtualResolution = new Vector2(64f, 32f) };
-        using var surfaces = new StubSurfaceProvider();
-        var sink = new AllocationProbeSink(WarmFrames, TotalFrames);
+        // A collection triggered by another test method running in parallel can land inside the
+        // measured window and drop a cache this loop reads back, so a disturbed run is thrown away
+        // and the whole render repeated. See AllocationProbe for the mechanism.
+        var runs = 0;
+        var sample = AllocationProbe.MeasureUntilUndisturbed(() =>
+        {
+            var scene = new CountingScene { VirtualResolution = new Vector2(64f, 32f) };
+            using var surfaces = new StubSurfaceProvider();
+            var sink = new AllocationProbeSink(WarmFrames, TotalFrames);
 
-        OfflineRenderer.Render(
-            scene,
-            surfaces,
-            new OfflineOptions { Sink = sink, Fps = 60d, Frames = TotalFrames });
+            var frames = OfflineRenderer.Render(
+                scene,
+                surfaces,
+                new OfflineOptions { Sink = sink, Fps = 60d, Frames = TotalFrames });
 
-        Assert.AreEqual(TotalFrames - WarmFrames, sink.MeasuredFrames);
+            runs++;
+            Assert.AreEqual(TotalFrames, frames);
+            Assert.AreEqual(TotalFrames - WarmFrames, sink.MeasuredFrames);
+            Assert.AreEqual(TotalFrames, scene.UpdateCount, "Every frame in the run must tick the scene.");
+            Assert.AreEqual(1, scene.StartCount);
+            return sink.Sample;
+        });
+
         Assert.AreEqual(
             0L,
-            sink.AllocatedBytes,
-            $"The warm offline loop allocated {sink.AllocatedBytes} managed bytes over " +
-            $"{sink.MeasuredFrames} frames. Pixel leases are pooled precisely so this stays zero.");
+            sample.AllocatedBytes,
+            $"The warm offline loop allocated {sample.AllocatedBytes} managed bytes over " +
+            $"{TotalFrames - WarmFrames} frames across {runs} run(s). Pixel leases are pooled " +
+            "precisely so this stays zero.");
     }
 
     private static long TicksFor(double at, double fps)

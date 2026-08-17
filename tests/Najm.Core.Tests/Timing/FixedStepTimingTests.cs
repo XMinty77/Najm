@@ -82,18 +82,20 @@ public sealed class FixedStepTimingTests
     {
         const double fps = 60d;
         var accumulator = FixedStepTiming.TicksForStill(FixedStepTiming.Tick(30L, fps).Elapsed, fps);
-        var before = GC.GetAllocatedBytesForCurrentThread();
+        var iteration = 0;
 
-        for (var iteration = 0; iteration < 100_000; iteration++)
-        {
-            var frame = iteration % 1_000;
-            var boundary = FixedStepTiming.Tick(frame, fps).Elapsed;
-            accumulator += FixedStepTiming.TicksForStill(boundary, fps);
-        }
+        var reading = AllocationProbe.AssertNoneAllocated(
+            100_000,
+            () =>
+            {
+                var frame = iteration % 1_000;
+                var boundary = FixedStepTiming.Tick(frame, fps).Elapsed;
+                accumulator += FixedStepTiming.TicksForStill(boundary, fps);
+                iteration++;
+            },
+            "Fixed-step boundary correction");
 
-        var after = GC.GetAllocatedBytesForCurrentThread();
-
-        Assert.AreEqual(0L, after - before);
+        Assert.AreEqual(reading.Invocations, iteration);
         Assert.IsGreaterThan(0L, accumulator);
     }
 

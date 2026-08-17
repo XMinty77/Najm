@@ -242,15 +242,15 @@ public sealed class EngineTransformSeamTests
 
         context.SetEngineTransform(engineToDevice);
         context.DrawPath(path, paint);
-        var before = GC.GetAllocatedBytesForCurrentThread();
-        for (var index = 0; index < 1_000; index++)
-        {
-            context.SetEngineTransform(engineToDevice);
-            context.DrawPath(path, paint);
-        }
-        var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
 
-        Assert.AreEqual(0L, allocated, $"The warmed engine transform seam allocated {allocated} managed bytes.");
+        AllocationProbe.AssertNoneAllocated(
+            1_000,
+            () =>
+            {
+                context.SetEngineTransform(engineToDevice);
+                context.DrawPath(path, paint);
+            },
+            "The warmed engine transform seam");
     }
 
     private static PathBuilder Rectangle(float left, float top, float right, float bottom) =>

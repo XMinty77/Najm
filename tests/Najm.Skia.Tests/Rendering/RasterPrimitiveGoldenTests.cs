@@ -70,14 +70,11 @@ public sealed class RasterPrimitiveGoldenTests
         var paint = Paint.Fill(Color.Srgb(0.25f, 0.5f, 0.75f));
 
         context.DrawPath(path, paint);
-        var before = GC.GetAllocatedBytesForCurrentThread();
-        for (var i = 0; i < 1_000; i++)
-        {
-            context.DrawPath(path, paint);
-        }
-        var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
 
-        Assert.AreEqual(0L, allocated, $"Stable rewound scratch-path drawing allocated {allocated} managed bytes.");
+        AllocationProbe.AssertNoneAllocated(
+            1_000,
+            () => context.DrawPath(path, paint),
+            "Stable rewound scratch-path drawing");
     }
 
     [TestMethod]
@@ -123,14 +120,11 @@ public sealed class RasterPrimitiveGoldenTests
         using var image = target.Snapshot();
 
         DrawPortableSequence(context, path, paint, image, clear, clip, transform);
-        var before = GC.GetAllocatedBytesForCurrentThread();
-        for (var index = 0; index < 1_000; index++)
-        {
-            DrawPortableSequence(context, path, paint, image, clear, clip, transform);
-        }
-        var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
 
-        Assert.AreEqual(0L, allocated, $"Warmed portable draw/state sequence allocated {allocated} managed bytes.");
+        AllocationProbe.AssertNoneAllocated(
+            1_000,
+            () => DrawPortableSequence(context, path, paint, image, clear, clip, transform),
+            "The warmed portable draw and state sequence");
     }
 
     private static void DrawPortableSequence(

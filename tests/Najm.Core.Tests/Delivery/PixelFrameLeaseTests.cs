@@ -86,37 +86,20 @@ public sealed class PixelFrameLeaseTests
         const int Height = 360;
 
         PixelFrameLease.TrimPool();
-        for (var warmup = 0; warmup < 8; warmup++)
-        {
-            PixelFrameLease.Rent(Width, Height, PixelFormat.Rgba8888).Dispose();
-        }
+        var cycle = 0;
 
-        GC.Collect();
-        GC.WaitForPendingFinalizers();
-        GC.Collect();
+        var reading = AllocationProbe.AssertNoneAllocated(
+            5_000,
+            () =>
+            {
+                var lease = PixelFrameLease.Rent(Width, Height, PixelFormat.Rgba8888);
+                lease.Pixels[0] = (byte)cycle;
+                cycle++;
+                lease.Dispose();
+            },
+            $"Rent/release cycles of a {Width}×{Height} frame");
 
-        // GC.Collect charges the calling thread a fixed 248 bytes of its own bookkeeping to the next
-        // measurement window — a constant, independent of what runs there. These settling cycles
-        // absorb it so the measured window sees only the pool.
-        for (var settle = 0; settle < 8; settle++)
-        {
-            PixelFrameLease.Rent(Width, Height, PixelFormat.Rgba8888).Dispose();
-        }
-
-        var before = GC.GetAllocatedBytesForCurrentThread();
-        for (var cycle = 0; cycle < 5_000; cycle++)
-        {
-            var lease = PixelFrameLease.Rent(Width, Height, PixelFormat.Rgba8888);
-            lease.Pixels[0] = (byte)cycle;
-            lease.Dispose();
-        }
-
-        var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
-
-        Assert.AreEqual(
-            0L,
-            allocated,
-            $"5000 rent/release cycles of a {Width}×{Height} frame allocated {allocated} managed bytes.");
+        Assert.AreEqual(reading.Invocations, cycle);
     }
 
     [TestMethod]

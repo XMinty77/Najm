@@ -316,16 +316,14 @@ public sealed class RenderTraverserTests
             scene.RenderDirect(context);
         }
 
-        const int measuredRenders = 10_000;
-        var before = GC.GetAllocatedBytesForCurrentThread();
-        for (var render = 0; render < measuredRenders; render++)
-        {
-            scene.RenderDirect(context);
-        }
-        var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+        var reading = AllocationProbe.AssertNoneAllocated(
+            10_000,
+            () => scene.RenderDirect(context),
+            "The warm render traversal");
 
-        Assert.AreEqual(0L, allocated, $"The warm render traversal allocated {allocated} managed bytes.");
-        Assert.AreEqual((64 + measuredRenders) * 4, context.DrawCount);
+        // Four drawables, every render. The probe owns the render count, so the expected draw count
+        // is derived from it rather than fixed.
+        Assert.AreEqual((64 + reading.Invocations) * 4, context.DrawCount);
     }
 
     private static void AssertPoint(Vector2 expected, Vector2 actual)

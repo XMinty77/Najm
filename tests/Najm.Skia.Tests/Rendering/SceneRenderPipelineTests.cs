@@ -414,15 +414,10 @@ public sealed class SceneRenderPipelineTests
             scene.Render(target);
         }
 
-        const int measuredRenders = 2_000;
-        var before = GC.GetAllocatedBytesForCurrentThread();
-        for (var render = 0; render < measuredRenders; render++)
-        {
-            scene.Render(target);
-        }
-        var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
-
-        Assert.AreEqual(0L, allocated, $"The warm end-to-end render loop allocated {allocated} managed bytes.");
+        AllocationProbe.AssertNoneAllocated(
+            2_000,
+            () => scene.Render(target),
+            "The warm end-to-end render loop");
     }
 
     private static byte[] Fill(int width, int height, Color color)

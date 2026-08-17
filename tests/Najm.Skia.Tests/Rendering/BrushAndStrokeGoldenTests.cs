@@ -250,18 +250,14 @@ public sealed class BrushAndStrokeGoldenTests
             context.DrawPath(path, dashed);
         }
 
-        var before = GC.GetAllocatedBytesForCurrentThread();
-        for (var i = 0; i < 1_000; i++)
-        {
-            context.DrawPath(path, paint);
-            context.DrawPath(path, dashed);
-        }
-        var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
-
-        Assert.AreEqual(
-            0L,
-            allocated,
-            $"Value-keyed brush and dash caches allocated {allocated} managed bytes in steady state.");
+        AllocationProbe.AssertNoneAllocated(
+            1_000,
+            () =>
+            {
+                context.DrawPath(path, paint);
+                context.DrawPath(path, dashed);
+            },
+            "Value-keyed brush and dash caches in steady state");
     }
 
     private static Brush Gradient() =>

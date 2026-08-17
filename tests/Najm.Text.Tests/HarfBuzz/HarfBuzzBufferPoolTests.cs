@@ -48,15 +48,18 @@ public sealed class HarfBuzzBufferPoolTests
             pool.Return(buffer);
         }
 
-        var before = GC.GetAllocatedBytesForCurrentThread();
-        for (var index = 0; index < 1_000; index++)
-        {
-            buffer = pool.Rent();
-            pool.Return(buffer);
-        }
-        var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+        var cycles = 0;
+        var reading = AllocationProbe.AssertNoneAllocated(
+            1_000,
+            () =>
+            {
+                buffer = pool.Rent();
+                pool.Return(buffer);
+                cycles++;
+            },
+            "Warm rent and return on the HarfBuzz buffer pool");
 
-        Assert.AreEqual(0, allocated);
+        Assert.AreEqual(reading.Invocations, cycles);
     }
 
     [TestMethod]

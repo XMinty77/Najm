@@ -15,23 +15,24 @@ public sealed class SceneGraphAllocationTests
         Assert.IsTrue(parent.Remove(child));
         parent.Add(child);
         var accumulator = parent.Children.Count;
-        var before = GC.GetAllocatedBytesForCurrentThread();
 
-        for (var iteration = 0; iteration < 100_000; iteration++)
-        {
-            if (!parent.Remove(child))
+        var reading = AllocationProbe.AssertNoneAllocated(
+            100_000,
+            () =>
             {
-                throw new InvalidOperationException("Expected the stable child to be present.");
-            }
+                if (!parent.Remove(child))
+                {
+                    throw new InvalidOperationException("Expected the stable child to be present.");
+                }
 
-            parent.Add(child);
-            accumulator += parent.Children.Count;
-        }
+                parent.Add(child);
+                accumulator += parent.Children.Count;
+            },
+            "Detach and reattach at stable capacity");
 
-        var after = GC.GetAllocatedBytesForCurrentThread();
-
-        Assert.AreEqual(0L, after - before);
-        Assert.AreEqual(100_001, accumulator);
+        // One from the reading before the probe ran, then one per detach/reattach cycle. The probe
+        // decides how many cycles that is, so the expected total comes from it.
+        Assert.AreEqual(1 + reading.Invocations, accumulator);
     }
 
     [TestMethod]
@@ -49,19 +50,21 @@ public sealed class SceneGraphAllocationTests
             Scale = new Vector2(1.5f, 0.75f),
         });
         var accumulator = child.LocalMatrix.M11 + child.WorldMatrix.M31 + child.InverseWorld.M32;
-        var before = GC.GetAllocatedBytesForCurrentThread();
+        var reads = 0;
 
-        for (var iteration = 0; iteration < 100_000; iteration++)
-        {
-            accumulator += child.LocalMatrix.M11;
-            accumulator += child.WorldMatrix.M31;
-            accumulator += child.InverseWorld.M32;
-            accumulator += child.WorldPosition.X;
-        }
+        var reading = AllocationProbe.AssertNoneAllocated(
+            100_000,
+            () =>
+            {
+                accumulator += child.LocalMatrix.M11;
+                accumulator += child.WorldMatrix.M31;
+                accumulator += child.InverseWorld.M32;
+                accumulator += child.WorldPosition.X;
+                reads++;
+            },
+            "Clean transform reads");
 
-        var after = GC.GetAllocatedBytesForCurrentThread();
-
-        Assert.AreEqual(0L, after - before);
+        Assert.AreEqual(reading.Invocations, reads);
         Assert.AreNotEqual(0f, accumulator);
     }
 
@@ -78,20 +81,20 @@ public sealed class SceneGraphAllocationTests
             accumulator += parent.GetChildInPaintOrder(index) is Node2D ? 1 : 0;
         }
 
-        var before = GC.GetAllocatedBytesForCurrentThread();
-
-        for (var iteration = 0; iteration < 1_000; iteration++)
-        {
-            for (var index = 0; index < parent.Children.Count; index++)
+        var reading = AllocationProbe.AssertNoneAllocated(
+            1_000,
+            () =>
             {
-                accumulator += parent.GetChildInPaintOrder(index) is Node2D ? 1 : 0;
-            }
-        }
+                for (var index = 0; index < parent.Children.Count; index++)
+                {
+                    accumulator += parent.GetChildInPaintOrder(index) is Node2D ? 1 : 0;
+                }
+            },
+            "Equal-ZIndex paint-order reads");
 
-        var after = GC.GetAllocatedBytesForCurrentThread();
-
-        Assert.AreEqual(0L, after - before);
-        Assert.AreEqual(3_003, accumulator);
+        // Three children walked once before the probe, then three per probe iteration. Anything
+        // less means a child went missing from paint order.
+        Assert.AreEqual(3 * (1 + reading.Invocations), accumulator);
     }
 
     [TestMethod]
@@ -107,20 +110,20 @@ public sealed class SceneGraphAllocationTests
             accumulator += parent.GetChildInPaintOrder(index) is Node2D ? 1 : 0;
         }
 
-        var before = GC.GetAllocatedBytesForCurrentThread();
-
-        for (var iteration = 0; iteration < 1_000; iteration++)
-        {
-            for (var index = 0; index < parent.Children.Count; index++)
+        var reading = AllocationProbe.AssertNoneAllocated(
+            1_000,
+            () =>
             {
-                accumulator += parent.GetChildInPaintOrder(index) is Node2D ? 1 : 0;
-            }
-        }
+                for (var index = 0; index < parent.Children.Count; index++)
+                {
+                    accumulator += parent.GetChildInPaintOrder(index) is Node2D ? 1 : 0;
+                }
+            },
+            "Mixed-ZIndex paint-order reads");
 
-        var after = GC.GetAllocatedBytesForCurrentThread();
-
-        Assert.AreEqual(0L, after - before);
-        Assert.AreEqual(3_003, accumulator);
+        // Three children walked once before the probe, then three per probe iteration. Anything
+        // less means a child went missing from the sorted paint order.
+        Assert.AreEqual(3 * (1 + reading.Invocations), accumulator);
     }
 
     [TestMethod]
@@ -135,19 +138,19 @@ public sealed class SceneGraphAllocationTests
             accumulator += child is Node2D ? 1 : 0;
         }
 
-        var before = GC.GetAllocatedBytesForCurrentThread();
-
-        for (var iteration = 0; iteration < 10_000; iteration++)
-        {
-            foreach (var child in parent.Children)
+        var reading = AllocationProbe.AssertNoneAllocated(
+            10_000,
+            () =>
             {
-                accumulator += child is Node2D ? 1 : 0;
-            }
-        }
+                foreach (var child in parent.Children)
+                {
+                    accumulator += child is Node2D ? 1 : 0;
+                }
+            },
+            "Concrete children foreach");
 
-        var after = GC.GetAllocatedBytesForCurrentThread();
-
-        Assert.AreEqual(0L, after - before);
-        Assert.AreEqual(20_002, accumulator);
+        // Two children enumerated once before the probe, then two per probe iteration. A boxed
+        // enumerator would show up as allocation; a short enumeration would show up here.
+        Assert.AreEqual(2 * (1 + reading.Invocations), accumulator);
     }
 }

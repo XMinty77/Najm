@@ -62,16 +62,18 @@ public sealed class EaseTests
     {
         var timing = Ease.InOutCubic;
         var accumulator = timing.Evaluate(0.25f);
-        var before = GC.GetAllocatedBytesForCurrentThread();
+        var index = 0;
 
-        for (var index = 0; index < 10_000; index++)
-        {
-            accumulator += timing.Evaluate((index % 1_000) / 1_000f);
-        }
+        var reading = AllocationProbe.AssertNoneAllocated(
+            10_000,
+            () =>
+            {
+                accumulator += timing.Evaluate((index % 1_000) / 1_000f);
+                index++;
+            },
+            "Built-in easing evaluation");
 
-        var after = GC.GetAllocatedBytesForCurrentThread();
-
-        Assert.AreEqual(0L, after - before);
+        Assert.AreEqual(reading.Invocations, index);
         Assert.IsGreaterThan(0f, accumulator);
     }
 

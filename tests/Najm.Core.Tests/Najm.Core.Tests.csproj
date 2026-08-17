@@ -17,6 +17,7 @@
 
   <ItemGroup>
     <Using Include="Microsoft.VisualStudio.TestTools.UnitTesting" />
+    <Using Include="Najm.Tests" />
   </ItemGroup>
   <ItemGroup>
     <Compile Include="../Shared/AllocationProbe.cs" Link="AllocationProbe.cs" />
