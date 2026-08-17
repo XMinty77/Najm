@@ -38,10 +38,11 @@ public sealed class SceneRenderPipelineTests
         var layer = scene.Layers.Add(new ScreenLayer { ClearColor = OpaqueBlack });
         var rectangle = layer.Root.Add(new RectDrawable(new Rect(0f, 0f, 3f, 2f), OpaqueRed));
         rectangle.Position = new Vector2(2f, 1f);
-        scene.Load();
-        scene.Tick(Ticks.At(0));
 
         using var provider = new RasterSkiaSurfaceProvider();
+        scene.Load(new SceneEnvironment(provider));
+        scene.Tick(Ticks.At(0));
+
         using var target = provider.CreateTarget(new SurfaceSpec(8, 4));
         scene.Render(target);
 
@@ -64,9 +65,10 @@ public sealed class SceneRenderPipelineTests
         var layer = scene.Layers.Add(new ScreenLayer { ClearColor = OpaqueBlack });
         layer.Root.Add(new RectDrawable(new Rect(0f, 0f, 3f, 2f), OpaqueRed)).Position =
             new Vector2(2f, 1f);
-        scene.Load();
 
         using var provider = new RasterSkiaSurfaceProvider();
+        scene.Load(new SceneEnvironment(provider));
+
         using var target = provider.CreateTarget(new SurfaceSpec(16, 8));
         scene.Render(target);
 
@@ -95,9 +97,10 @@ public sealed class SceneRenderPipelineTests
             new Vector2(0f, 1f);
         layer.Root.Add(new RectDrawable(new Rect(0f, 0f, 1f, 1f), OpaqueGreen)).Position =
             new Vector2(0f, -1f);
-        scene.Load();
 
         using var provider = new RasterSkiaSurfaceProvider();
+        scene.Load(new SceneEnvironment(provider));
+
         using var target = provider.CreateTarget(new SurfaceSpec(8, 4));
         scene.Render(target);
 
@@ -131,9 +134,10 @@ public sealed class SceneRenderPipelineTests
         var blue = layer.Root.Add(new RectDrawable(new Rect(0f, 0f, 3f, 2f), OpaqueBlue) { ZIndex = 5 });
         blue.Position = new Vector2(1f, 0f);
         var red = layer.Root.Add(new RectDrawable(new Rect(0f, 0f, 3f, 2f), OpaqueRed) { ZIndex = 1 });
-        scene.Load();
 
         using var provider = new RasterSkiaSurfaceProvider();
+        scene.Load(new SceneEnvironment(provider));
+
         using var target = provider.CreateTarget(new SurfaceSpec(4, 2));
         scene.Render(target);
 
@@ -166,10 +170,11 @@ public sealed class SceneRenderPipelineTests
         child.Position = new Vector2(1f, 0f);
         var sibling = layer.Root.Add(new RectDrawable(new Rect(0f, 0f, 1f, 2f), OpaqueBlue));
         sibling.Position = new Vector2(3f, 0f);
-        scene.Load();
-        scene.Tick(Ticks.At(0));
 
         using var provider = new RasterSkiaSurfaceProvider();
+        scene.Load(new SceneEnvironment(provider));
+        scene.Tick(Ticks.At(0));
+
         using var target = provider.CreateTarget(new SurfaceSpec(4, 2));
 
         parent.Visible = false;
@@ -204,22 +209,25 @@ public sealed class SceneRenderPipelineTests
     [TestMethod]
     public void ALayerThatCannotContributeIsNotCleared_NotWalked_AndDoesNotRunItsHooks()
     {
-        // COVERS THE TRANSITIONAL NO-COMPOSITOR PATH. See docsref/DEVIATIONS.md entry 10: this
-        // scene renders blue under the compositor, because an upper layer's opaque ClearColor is
-        // content that merges over everything beneath it. The fallback path instead takes the
-        // background from the bottom participating layer, which is what the green expectation
-        // below encodes. When SceneEnvironment lands and the fallback goes away, that expectation
-        // becomes blue. LayerCompositionTests covers the composited reading today.
+        // A participating layer's ClearColor is content: the layer is bound, cleared, walked, and
+        // merged over everything beneath it. So an upper layer that clears opaque blue and paints
+        // nothing still covers the frame, and whatever the layers below it painted survives only
+        // where that upper layer is transparent — here, nowhere.
         //
-        // The bottom layer would clear the frame red and paint it green; the layer above it clears
-        // blue and paints nothing. While the bottom layer cannot contribute, the frame is blue.
+        // The bottom layer clears red and paints green across the whole frame; the layer above it
+        // clears opaque blue. The frame is therefore blue in all three configurations below, and
+        // what separates them is whether the bottom layer ran at all: a layer that cannot
+        // contribute is not cleared, not walked, and does not bracket its hooks, which is what the
+        // hook counts read. LayerCompositionTests proves the same skip in the compositor's own
+        // counters.
         var scene = new Scene { VirtualResolution = new Vector2(4f, 2f) };
         var bottom = scene.Layers.Add(new HookLayer { ClearColor = OpaqueRed });
         bottom.Root.Add(new RectDrawable(new Rect(0f, 0f, 4f, 2f), OpaqueGreen));
         scene.Layers.Add(new ScreenLayer { ClearColor = OpaqueBlue });
-        scene.Load();
 
         using var provider = new RasterSkiaSurfaceProvider();
+        scene.Load(new SceneEnvironment(provider));
+
         using var target = provider.CreateTarget(new SurfaceSpec(4, 2));
 
         bottom.Visible = false;
@@ -240,9 +248,53 @@ public sealed class SceneRenderPipelineTests
         bottom.Opacity = 1f;
         scene.Render(target);
 
-        Assert.AreEqual(Repeat(Green, 8), Hex(target), "Restoring the layer restores its clear and its tree.");
+        Assert.AreEqual(
+            Repeat(Blue, 8),
+            Hex(target),
+            "The opaque layer above decides the frame either way; restoring the bottom layer runs " +
+            "its clear and its tree underneath it.");
         Assert.AreEqual(1, bottom.BeforeCount);
         Assert.AreEqual(1, bottom.AfterCount);
+    }
+
+    [TestMethod]
+    public void EveryRenderGoesThroughTheCompositor_ThereIsNoSecondReadingOfAFrame()
+    {
+        // Scene.Render has exactly one meaning: hand the frame to the compositor acquired at load
+        // from env.Surfaces. An ordinary scene, loaded the ordinary way, is the case that used to
+        // have a second answer, so it is the case worth pinning. The counters are what prove it —
+        // they are cleared at the start of each render and published when it completes, so a
+        // populated set cannot come from anywhere but a compositor that just ran this frame.
+        var scene = new Scene { VirtualResolution = new Vector2(4f, 2f) };
+        var bottom = scene.Layers.Add(new ScreenLayer { ClearColor = OpaqueRed });
+        bottom.Root.Add(new RectDrawable(new Rect(0f, 0f, 2f, 2f), OpaqueGreen));
+
+        using var provider = new RasterSkiaSurfaceProvider();
+        scene.Load(new SceneEnvironment(provider));
+
+        Assert.IsNotNull(scene.Compositor, "Load must acquire a compositor from the environment's provider.");
+
+        using var target = provider.CreateTarget(new SurfaceSpec(4, 2));
+        scene.Render(target);
+
+        Assert.IsTrue(
+            Stats(scene).UsedSingleLayerFastPath,
+            "One qualifying layer takes FP-1, which is still the compositor and says so in its counters.");
+        Assert.AreEqual(
+            Green + Green + Red + Red +
+            Green + Green + Red + Red,
+            Hex(target));
+
+        // A second layer that only clears is the case the two readings disagreed on: its opaque
+        // clear is content and merges over everything below, so the frame is blue rather than the
+        // bottom layer's red-and-green.
+        scene.Layers.Add(new ScreenLayer { ClearColor = OpaqueBlue });
+        scene.Render(target);
+
+        Assert.AreEqual(Repeat(Blue, 8), Hex(target), "An upper layer's opaque ClearColor is content.");
+        Assert.AreEqual(2, Stats(scene).MergeCount, "Both layers staged and merged.");
+        Assert.AreEqual(2, Stats(scene).LayerTargetCount);
+        Assert.IsFalse(Stats(scene).UsedSingleLayerFastPath);
     }
 
     [TestMethod]
@@ -258,9 +310,10 @@ public sealed class SceneRenderPipelineTests
             After = new RectDrawable(new Rect(3f, 0f, 1f, 2f), OpaqueBlue),
         });
         layer.Root.Add(new RectDrawable(new Rect(0f, 0f, 2f, 2f), OpaqueGreen));
-        scene.Load();
 
         using var provider = new RasterSkiaSurfaceProvider();
+        scene.Load(new SceneEnvironment(provider));
+
         using var target = provider.CreateTarget(new SurfaceSpec(4, 2));
         scene.Render(target);
 
@@ -280,7 +333,9 @@ public sealed class SceneRenderPipelineTests
         var world = scene.Layers.Add(new WorldLayer2D());
         var moving = world.Root.Add(new RectDrawable(new Rect(0f, 0f, 2f, 2f), OpaqueGreen));
         moving.Add(new RectDrawable(new Rect(0f, 0f, 1f, 1f), OpaqueRed)).Position = new Vector2(-2f, 0f);
-        scene.Load();
+
+        using var provider = new RasterSkiaSurfaceProvider();
+        scene.Load(new SceneEnvironment(provider));
         scene.Tick(Ticks.At(0));
 
         var worldMatrix = moving.WorldMatrix;
@@ -288,7 +343,6 @@ public sealed class SceneRenderPipelineTests
         var layerCount = scene.Layers.Count;
         var updateCount = moving.UpdateCount;
 
-        using var provider = new RasterSkiaSurfaceProvider();
         using var first = provider.CreateTarget(new SurfaceSpec(8, 4));
         using var second = provider.CreateTarget(new SurfaceSpec(8, 4));
         scene.Render(first);
@@ -317,9 +371,10 @@ public sealed class SceneRenderPipelineTests
         var scene = new Scene { VirtualResolution = new Vector2(4f, 2f) };
         var layer = scene.Layers.Add(new ScreenLayer { ClearColor = OpaqueBlack });
         var node = layer.Root.Add(new RectDrawable(new Rect(0f, 0f, 2f, 2f), OpaqueGreen));
-        scene.Load();
 
         using var provider = new RasterSkiaSurfaceProvider();
+        scene.Load(new SceneEnvironment(provider));
+
         using var target = provider.CreateTarget(new SurfaceSpec(4, 2));
         scene.Render(target);
         var beforeAnyTick = ReadRgba(target);
@@ -348,10 +403,11 @@ public sealed class SceneRenderPipelineTests
         parent.Add(new RectDrawable(new Rect(1f, 1f, 1f, 1f), OpaqueBlue) { ZIndex = -2 });
         var world = scene.Layers.Add(new WorldLayer2D());
         world.Root.Add(new RectDrawable(new Rect(0f, 0f, 1f, 1f), OpaqueGreen)).Position = new Vector2(1f, 1f);
-        scene.Load();
-        scene.Tick(Ticks.At(0));
 
         using var provider = new RasterSkiaSurfaceProvider();
+        scene.Load(new SceneEnvironment(provider));
+        scene.Tick(Ticks.At(0));
+
         using var target = provider.CreateTarget(new SurfaceSpec(8, 4));
         for (var warmup = 0; warmup < 64; warmup++)
         {
@@ -413,6 +469,9 @@ public sealed class SceneRenderPipelineTests
 
         return -1;
     }
+
+    private static CompositorStats Stats(Scene scene) =>
+        (scene.Compositor ?? throw new InvalidOperationException("The scene has no compositor.")).Stats;
 
     private static string Repeat(string pixel, int count) => string.Concat(Enumerable.Repeat(pixel, count));
 

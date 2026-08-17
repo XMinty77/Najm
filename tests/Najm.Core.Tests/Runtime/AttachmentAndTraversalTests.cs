@@ -32,7 +32,7 @@ public sealed class AttachmentAndTraversalTests
         parentBehavior.AttachAction = AssertCoherentAttachment;
         child.AttachAction = AssertCoherentAttachment;
 
-        scene.Load();
+        scene.Load(TestEnvironment.Stub());
 
         CollectionAssert.AreEqual(
             new[]
@@ -59,7 +59,7 @@ public sealed class AttachmentAndTraversalTests
             AttachAction = () => throw new AttachFailureException(),
         });
 
-        Assert.ThrowsExactly<AttachFailureException>(scene.Load);
+        Assert.ThrowsExactly<AttachFailureException>(() => scene.Load(TestEnvironment.Stub()));
 
         CollectionAssert.AreEqual(
             new[]
@@ -109,7 +109,7 @@ public sealed class AttachmentAndTraversalTests
         };
         rootBehavior.DetachAction = () => Assert.IsTrue(scene.Registry.Contains(child));
         layer.DetachAction = () => Assert.IsTrue(scene.Registry.Contains(child));
-        scene.Load();
+        scene.Load(TestEnvironment.Stub());
         events.Clear();
 
         var aggregate = Assert.ThrowsExactly<AggregateException>(scene.Unload);
@@ -149,7 +149,7 @@ public sealed class AttachmentAndTraversalTests
         var scene = new ProbeScene();
         var layer = scene.Layers.Add(new ScreenLayer());
         layer.Root.Behaviors.Add(behavior);
-        scene.Load();
+        scene.Load(TestEnvironment.Stub());
         scene.Unload();
 
         Assert.AreSame(layer.Root, behavior.Node);
@@ -193,7 +193,7 @@ public sealed class AttachmentAndTraversalTests
         var events = new List<string>();
         var scene = new ProbeScene(events);
         var layer = scene.Layers.Add(new ExternalStyleLayer(events));
-        scene.Load();
+        scene.Load(TestEnvironment.Stub());
         events.Clear();
 
         var immediate = layer.Root.Add(new ProbeNode("immediate", events));
@@ -242,7 +242,7 @@ public sealed class AttachmentAndTraversalTests
         var scene = new ProbeScene();
         var layer = scene.Layers.Add(new MutableRootLayer());
         var establishedRoot = layer.Root;
-        scene.Load();
+        scene.Load(TestEnvironment.Stub());
         layer.ReplaceRoot();
 
         var exception = Assert.ThrowsExactly<InvalidOperationException>(
@@ -278,7 +278,7 @@ public sealed class AttachmentAndTraversalTests
             Visible = false,
         });
         secondLayer.Root.Add(new ProbeNode("third", events));
-        scene.Load();
+        scene.Load(TestEnvironment.Stub());
         events.Clear();
 
         scene.Tick(RuntimeTicks.At(0));

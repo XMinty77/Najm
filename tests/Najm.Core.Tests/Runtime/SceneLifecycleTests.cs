@@ -12,7 +12,7 @@ public sealed class SceneLifecycleTests
         var node = layer.Root.Add(new ProbeNode("node", events));
         node.Behaviors.Add(new ProbeBehavior("behavior", events));
 
-        scene.Load();
+        scene.Load(TestEnvironment.Stub());
         scene.Tick(RuntimeTicks.At(0));
         scene.Tick(RuntimeTicks.At(1));
 
@@ -46,22 +46,22 @@ public sealed class SceneLifecycleTests
         Assert.ThrowsExactly<InvalidOperationException>(scene.Unload);
         Assert.IsEmpty(scene.Events);
 
-        scene.Load();
-        Assert.ThrowsExactly<InvalidOperationException>(scene.Load);
+        scene.Load(TestEnvironment.Stub());
+        Assert.ThrowsExactly<InvalidOperationException>(() => scene.Load(TestEnvironment.Stub()));
         scene.Tick(RuntimeTicks.At(0));
         Assert.ThrowsExactly<InvalidOperationException>(() => scene.Tick(RuntimeTicks.At(0)));
         scene.Stop();
         Assert.ThrowsExactly<InvalidOperationException>(() => scene.Tick(RuntimeTicks.At(1)));
         scene.Unload();
         Assert.ThrowsExactly<InvalidOperationException>(() => scene.Tick(RuntimeTicks.At(2)));
-        Assert.ThrowsExactly<InvalidOperationException>(scene.Load);
+        Assert.ThrowsExactly<InvalidOperationException>(() => scene.Load(TestEnvironment.Stub()));
     }
 
     [TestMethod]
     public void StopAndUnloadAreIdempotentAndPairOnlyCompletedHooks()
     {
         var started = new ProbeScene();
-        started.Load();
+        started.Load(TestEnvironment.Stub());
         started.Tick(RuntimeTicks.At(0));
 
         started.Stop();
@@ -75,7 +75,7 @@ public sealed class SceneLifecycleTests
         Assert.AreEqual(SceneState.Unloaded, started.State);
 
         var neverStarted = new ProbeScene();
-        neverStarted.Load();
+        neverStarted.Load(TestEnvironment.Stub());
         neverStarted.Stop();
         neverStarted.Unload();
 
@@ -89,7 +89,7 @@ public sealed class SceneLifecycleTests
         {
             StartAction = () => throw new TestLifecycleException("start"),
         };
-        scene.Load();
+        scene.Load(TestEnvironment.Stub());
 
         var exception = Assert.ThrowsExactly<TestLifecycleException>(
             () => scene.Tick(RuntimeTicks.At(0)));
@@ -114,7 +114,7 @@ public sealed class SceneLifecycleTests
         var layer = scene.Layers.Add(new ProbeLayer("layer", events));
         var node = layer.Root.Add(new ProbeNode("node", events));
 
-        var exception = Assert.ThrowsExactly<TestLifecycleException>(scene.Load);
+        var exception = Assert.ThrowsExactly<TestLifecycleException>(() => scene.Load(TestEnvironment.Stub()));
 
         Assert.AreEqual("load", exception.Message);
         Assert.AreEqual(SceneState.Faulted, scene.State);
@@ -144,7 +144,7 @@ public sealed class SceneLifecycleTests
             throw new TestLifecycleException("load");
         };
 
-        var aggregate = Assert.ThrowsExactly<AggregateException>(firstScene.Load);
+        var aggregate = Assert.ThrowsExactly<AggregateException>(() => firstScene.Load(TestEnvironment.Stub()));
 
         Assert.HasCount(2, aggregate.InnerExceptions);
         Assert.IsInstanceOfType<TestLifecycleException>(aggregate.InnerExceptions[0]);
@@ -178,7 +178,7 @@ public sealed class SceneLifecycleTests
         {
             DetachAction = () => throw new TestLifecycleException("detach"),
         });
-        scene.Load();
+        scene.Load(TestEnvironment.Stub());
         scene.Tick(RuntimeTicks.At(0));
 
         Assert.ThrowsExactly<TestLifecycleException>(scene.Stop);

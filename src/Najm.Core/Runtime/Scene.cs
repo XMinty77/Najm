@@ -1,6 +1,5 @@
 using System.Numerics;
 using System.Runtime.ExceptionServices;
-using Najm.Utils;
 
 namespace Najm.Core;
 
@@ -17,6 +16,7 @@ public class Scene
 
     private readonly SceneRuntime runtime;
     private readonly Vector2 virtualResolution = DefaultVirtualResolution;
+    private SceneEnvironment? environment;
     private ICompositor? compositor;
     private SceneState state;
     private bool loadCompleted;
@@ -35,6 +35,26 @@ public class Scene
 
     /// <summary>Gets this scene's controlled, add-ordered layer stack.</summary>
     public LayerStack Layers { get; }
+
+    /// <summary>Gets the closed capability set this scene was loaded with.</summary>
+    /// <remarks>
+    /// <para>
+    /// Valid only while the scene is loaded. The engine binds it before any author code runs, so
+    /// <see cref="OnLoad"/> and everything after it can read it, and releases it once
+    /// <see cref="OnUnload"/> has returned — an unloaded scene holds no reference to its host's
+    /// capabilities, and neither does one whose load failed. Reading it outside that window is a
+    /// lifecycle mistake and throws rather than handing back a half-formed environment.
+    /// </para>
+    /// <para>
+    /// A scene reaches its host only through this property. There is no service registry and no
+    /// ambient host singleton, so an embedder can hand a child scene a decorated environment and be
+    /// certain the child cannot see around it.
+    /// </para>
+    /// </remarks>
+    /// <exception cref="InvalidOperationException">The scene is not loaded.</exception>
+    public SceneEnvironment Env =>
+        environment ?? throw new InvalidOperationException(
+            $"Scene.Env is valid only while the scene is loaded; this scene is {state}.");
 
     /// <summary>
     /// Gets the finite, positive size of this scene's virtual coordinate space. The default is
@@ -120,19 +140,14 @@ public class Scene
     /// <param name="target">The target to paint this frame into.</param>
     /// <remarks>
     /// <para>
-    /// This is the composited path. The render scale is derived from the target's size against
-    /// <see cref="VirtualResolution"/>, and the frame is handed to the <see cref="ICompositor"/>
-    /// acquired at load, which stages each layer through its own target and merges it with the
-    /// layer's <see cref="Layer.Opacity"/>, <see cref="Layer.Blend"/>, and
-    /// <see cref="Layer.Viewport"/>.
-    /// </para>
-    /// <para>
-    /// A scene loaded without a composition authority has no compositor, and this method falls back
-    /// to a single-context walk: the surface is cleared to the bottom participating layer's
-    /// <see cref="Layer.ClearColor"/> and every participating layer is walked by
-    /// <see cref="RenderTraverser"/> into that one context. The fallback cannot honor per-layer
-    /// presentation, which is precisely what the compositor exists to apply, so a host that cares
-    /// about layer composition supplies a surface provider at load.
+    /// This is the composited path, and it is the only thing this method does. The render scale is
+    /// derived from the target's size against <see cref="VirtualResolution"/>, and the frame is
+    /// handed to the <see cref="ICompositor"/> acquired at load from
+    /// <see cref="SceneEnvironment.Surfaces"/>, which stages each layer through its own target and
+    /// merges it with the layer's <see cref="Layer.Opacity"/>, <see cref="Layer.Blend"/>, and
+    /// <see cref="Layer.Viewport"/>. Every loaded scene has an environment and therefore a
+    /// compositor, so there is no second reading of a frame: each participating layer's
+    /// <see cref="Layer.ClearColor"/> is content that merges over everything beneath it.
     /// </para>
     /// <para>
     /// Rendering is idempotent: it does not mutate observable scene state, so one ticked frame can
@@ -152,18 +167,13 @@ public class Scene
         EnsureRenderable(nameof(Render));
 
         var renderScale = ResolveRenderScale(target.Size);
+        var active = compositor ?? throw new InvalidOperationException(
+            "A loaded scene always holds the compositor acquired from its environment.");
+
         isRendering = true;
         try
         {
-            if (compositor is not null)
-            {
-                compositor.Render(Layers, target, virtualResolution, renderScale);
-                return;
-            }
-
-            var context = target.GetContext(renderScale);
-            context.Clear(BackgroundColor);
-            RenderTraverser.RenderLayers(Layers, context, virtualResolution, renderScale);
+            active.Render(Layers, target, virtualResolution, renderScale);
         }
         finally
         {
@@ -230,20 +240,21 @@ public class Scene
 
     internal ICompositor? Compositor => compositor;
 
-    internal void Load() => Load(surfaces: null);
-
     /// <summary>
-    /// Loads the scene, binding the backend's composition authority before author load code runs.
+    /// Loads the scene, binding the environment and acquiring its compositor before author load
+    /// code runs.
     /// </summary>
-    /// <param name="surfaces">
-    /// The backend surface provider this scene composites through, or null for a scene with no
-    /// composition authority — <see cref="Render(IRenderTarget)"/> then takes its single-context
-    /// fallback. This parameter stands in for the environment binding until the closed capability
-    /// set exists; the compositor is acquired from it exactly as it will be from
-    /// <c>env.Surfaces</c>.
+    /// <param name="env">
+    /// The closed capability set this scene runs against. Its
+    /// <see cref="SceneEnvironment.Surfaces"/> is the composition authority: the compositor
+    /// <see cref="Render(IRenderTarget)"/> delegates to is acquired from it here and disposed at
+    /// <see cref="Unload"/>.
     /// </param>
-    internal void Load(ISurfaceProvider? surfaces)
+    /// <exception cref="ArgumentNullException"><paramref name="env"/> is null.</exception>
+    /// <exception cref="InvalidOperationException">The scene has already left its constructed state.</exception>
+    internal void Load(SceneEnvironment env)
     {
+        ArgumentNullException.ThrowIfNull(env);
         if (state != SceneState.Constructed)
         {
             throw InvalidTransition(nameof(Load), state);
@@ -253,7 +264,8 @@ public class Scene
         state = SceneState.Loading;
         try
         {
-            compositor = surfaces?.CreateCompositor();
+            environment = env;
+            compositor = env.Surfaces.CreateCompositor();
             runtime.AttachExistingLayers();
             OnLoad();
             loadCompleted = true;
@@ -391,28 +403,6 @@ public class Scene
     }
 
     /// <summary>
-    /// Gets the color a frame starts from: the bottom participating layer's
-    /// <see cref="Layer.ClearColor"/>, or transparent when no layer participates. A skipped layer
-    /// contributes nothing, its clear color included.
-    /// </summary>
-    private Color BackgroundColor
-    {
-        get
-        {
-            for (var index = 0; index < Layers.Count; index++)
-            {
-                var layer = Layers[index];
-                if (RenderTraverser.ParticipatesInRender(layer))
-                {
-                    return layer.ClearColor;
-                }
-            }
-
-            return Color.Transparent;
-        }
-    }
-
-    /// <summary>
     /// Returns the virtual-to-device pixel scale for one output size: the largest uniform scale
     /// that fits <see cref="VirtualResolution"/> inside it, matching the aspect-preserving letterbox
     /// the host applies around the content rect.
@@ -448,14 +438,21 @@ public class Scene
     }
 
     /// <summary>
-    /// Disposes the acquired compositor at most once, releasing every layer target and the
-    /// accumulation surface it owns, and returns a disposal failure instead of throwing so scene
-    /// teardown can report it beside the other cleanup failures.
+    /// Releases the environment binding and disposes the acquired compositor at most once, freeing
+    /// every layer target and the accumulation surface it owns, and returns a disposal failure
+    /// instead of throwing so scene teardown can report it beside the other cleanup failures.
     /// </summary>
+    /// <remarks>
+    /// The environment goes with the compositor because they arrive together: the compositor is the
+    /// environment's provider realized for this scene, so a scene that no longer has one must not
+    /// keep claiming the other. Note what is <em>not</em> disposed — the provider, the typesetter,
+    /// and the audio sink all outlive the scene and belong to whoever injected them.
+    /// </remarks>
     private Exception? ReleaseComposition()
     {
         var owned = compositor;
         compositor = null;
+        environment = null;
         if (owned is null)
         {
             return null;

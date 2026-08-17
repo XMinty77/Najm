@@ -26,7 +26,7 @@ public sealed class DeferredMutationTests
             Assert.AreSame(layer.Root, victim.Parent);
             Assert.IsNull(added.Parent);
         };
-        scene.Load();
+        scene.Load(TestEnvironment.Stub());
         events.Clear();
 
         scene.Tick(RuntimeTicks.At(0));
@@ -75,7 +75,7 @@ public sealed class DeferredMutationTests
             secondParent.Add(child);
             Assert.AreSame(firstParent, child.Parent);
         };
-        scene.Load();
+        scene.Load(TestEnvironment.Stub());
         events.Clear();
 
         scene.Tick(RuntimeTicks.At(0));
@@ -113,7 +113,7 @@ public sealed class DeferredMutationTests
             Assert.AreSame(layer.Root, parent.Parent);
             Assert.IsNull(pendingChild.Parent);
         };
-        scene.Load();
+        scene.Load(TestEnvironment.Stub());
 
         scene.Tick(RuntimeTicks.At(0));
 
@@ -152,7 +152,7 @@ public sealed class DeferredMutationTests
             Assert.AreSame(scene.Layers, secondLayer.OwnerStack);
             Assert.IsNull(addedLayer.OwnerStack);
         };
-        scene.Load();
+        scene.Load(TestEnvironment.Stub());
         events.Clear();
 
         scene.Tick(RuntimeTicks.At(0));
@@ -212,7 +212,7 @@ public sealed class DeferredMutationTests
                 layer.Root.Remove(first);
             }
         };
-        scene.Load();
+        scene.Load(TestEnvironment.Stub());
         events.Clear();
 
         scene.Tick(RuntimeTicks.At(0));
@@ -259,7 +259,7 @@ public sealed class DeferredMutationTests
             Assert.IsTrue(layer.Root.Remove(transient));
             Assert.IsNull(transient.Parent);
         };
-        scene.Load();
+        scene.Load(TestEnvironment.Stub());
         events.Clear();
 
         scene.Tick(RuntimeTicks.At(0));
@@ -297,7 +297,7 @@ public sealed class DeferredMutationTests
             layer.Root.Add(failing);
             layer.Root.Add(tail);
         };
-        scene.Load();
+        scene.Load(TestEnvironment.Stub());
         events.Clear();
 
         var exception = Assert.ThrowsExactly<FlushFailureException>(
@@ -339,7 +339,7 @@ public sealed class DeferredMutationTests
             layer.Root.Remove(failing);
             layer.Root.Add(tail);
         };
-        scene.Load();
+        scene.Load(TestEnvironment.Stub());
 
         var exception = Assert.ThrowsExactly<FlushFailureException>(
             () => scene.Tick(RuntimeTicks.At(0)));
@@ -365,7 +365,7 @@ public sealed class DeferredMutationTests
             layer.Root.Add(pending);
             throw new FlushFailureException("update");
         };
-        scene.Load();
+        scene.Load(TestEnvironment.Stub());
 
         Assert.ThrowsExactly<FlushFailureException>(() => scene.Tick(RuntimeTicks.At(0)));
 
@@ -384,7 +384,7 @@ public sealed class DeferredMutationTests
         var successfulLayer = successful.Layers.Add(new ProbeLayer("layer", events));
         var startedNode = new ProbeNode("startedNode", events);
         successful.StartAction = () => successfulLayer.Root.Add(startedNode);
-        successful.Load();
+        successful.Load(TestEnvironment.Stub());
         events.Clear();
 
         successful.Tick(RuntimeTicks.At(0));
@@ -403,7 +403,7 @@ public sealed class DeferredMutationTests
             failed.Layers.Add(pendingLayer);
             throw new FlushFailureException("start");
         };
-        failed.Load();
+        failed.Load(TestEnvironment.Stub());
 
         Assert.ThrowsExactly<FlushFailureException>(() => failed.Tick(RuntimeTicks.At(0)));
         Assert.IsNull(pendingNode.Parent);
@@ -423,7 +423,7 @@ public sealed class DeferredMutationTests
         {
             DetachAction = () => layer.Root.Add(replacement),
         });
-        scene.Load();
+        scene.Load(TestEnvironment.Stub());
 
         scene.Unload();
 

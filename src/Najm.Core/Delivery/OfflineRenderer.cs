@@ -10,6 +10,13 @@ namespace Najm.Core;
 /// serves any backend and Core keeps no rendering dependency.
 /// </para>
 /// <para>
+/// The provider is the only capability an offline run needs, so the loop builds the scene's
+/// <see cref="SceneEnvironment"/> around it and lets Core's null objects supply the rest. That is
+/// the honest description of a deterministic export: it loads no assets it was not handed, it draws
+/// no text — <see cref="NullTypesetter"/> would say so loudly if a scene tried — and its audio is a
+/// cue list somebody else assembles, not sound.
+/// </para>
+/// <para>
 /// <strong>The timing contract.</strong> The clock is <see cref="ClockPolicy.Fixed(double)"/> at
 /// the requested rate, so tick <c>k</c> carries <c>Dt = 1/fps</c> and <c>Elapsed = (k+1)/fps</c>,
 /// derived rather than accumulated. <strong>Output frame <c>k</c> is the render performed after
@@ -66,7 +73,7 @@ public static class OfflineRenderer
         var frameCount = options.ResolveFrameCount();
         var framesPerSecond = options.Fps;
 
-        scene.Load(surfaces);
+        scene.Load(new SceneEnvironment(surfaces));
         try
         {
             var size = ResolveOutputSize(scene.VirtualResolution, options.Scale, options.OutputSize);
@@ -154,7 +161,7 @@ public static class OfflineRenderer
 
         var ticks = FixedStepTiming.TicksForStill(at, framesPerSecond);
 
-        scene.Load(surfaces);
+        scene.Load(new SceneEnvironment(surfaces));
         try
         {
             var size = ResolveOutputSize(scene.VirtualResolution, scale, outputSize: null);

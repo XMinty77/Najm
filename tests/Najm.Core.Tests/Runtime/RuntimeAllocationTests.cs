@@ -11,7 +11,7 @@ public sealed class RuntimeAllocationTests
         var parent = layer.Root.Add(new CountingNode());
         var child = parent.Add(new CountingNode());
         var behavior = child.Behaviors.Add(new CountingBehavior());
-        scene.Load();
+        scene.Load(TestEnvironment.Stub());
 
         const int warmTicks = 64;
         for (var frame = 0; frame < warmTicks; frame++)

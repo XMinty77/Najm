@@ -53,7 +53,7 @@ public sealed class LayerCompositionTests
         top.Root.Add(new RectDrawable(new Rect(1f, 0f, 2f, 2f), OpaqueGreen));
 
         using var provider = new RasterSkiaSurfaceProvider();
-        scene.Load(provider);
+        scene.Load(new SceneEnvironment(provider));
         using var target = provider.CreateTarget(new SurfaceSpec(4, 2));
         scene.Render(target);
 
@@ -82,7 +82,7 @@ public sealed class LayerCompositionTests
         fading.Root.Add(new RectDrawable(new Rect(0f, 0f, 2f, 2f), OpaqueGreen));
 
         using var provider = new RasterSkiaSurfaceProvider();
-        scene.Load(provider);
+        scene.Load(new SceneEnvironment(provider));
         using var target = provider.CreateTarget(new SurfaceSpec(4, 2));
         scene.Render(target);
 
@@ -105,7 +105,7 @@ public sealed class LayerCompositionTests
         });
 
         using var provider = new RasterSkiaSurfaceProvider();
-        scene.Load(provider);
+        scene.Load(new SceneEnvironment(provider));
         using var target = provider.CreateTarget(new SurfaceSpec(2, 1));
         scene.Render(target);
 
@@ -126,7 +126,7 @@ public sealed class LayerCompositionTests
         });
 
         using var provider = new RasterSkiaSurfaceProvider();
-        scene.Load(provider);
+        scene.Load(new SceneEnvironment(provider));
         using var target = provider.CreateTarget(new SurfaceSpec(2, 1));
         scene.Render(target);
 
@@ -159,7 +159,7 @@ public sealed class LayerCompositionTests
         framed.Root.Add(new RectDrawable(new Rect(6f, 3f, 1f, 1f), OpaqueGreen));
 
         using var provider = new RasterSkiaSurfaceProvider();
-        scene.Load(provider);
+        scene.Load(new SceneEnvironment(provider));
         using var target = provider.CreateTarget(new SurfaceSpec(8, 4));
         scene.Render(target);
 
@@ -188,7 +188,7 @@ public sealed class LayerCompositionTests
         });
 
         using var provider = new RasterSkiaSurfaceProvider();
-        scene.Load(provider);
+        scene.Load(new SceneEnvironment(provider));
         using var target = provider.CreateTarget(new SurfaceSpec(8, 4));
         scene.Render(target);
 
@@ -226,7 +226,7 @@ public sealed class LayerCompositionTests
         var covering = scene.Layers.Add(new ScreenLayer { ClearColor = OpaqueBlue });
 
         using var provider = new RasterSkiaSurfaceProvider();
-        scene.Load(provider);
+        scene.Load(new SceneEnvironment(provider));
         Compositor(scene).Debug.ForceCanonicalPath = true;
         using var target = provider.CreateTarget(new SurfaceSpec(4, 2));
 
@@ -264,7 +264,7 @@ public sealed class LayerCompositionTests
         scene.Layers.Add(new ScreenLayer { ClearColor = OpaqueBlue });
 
         using var provider = new RasterSkiaSurfaceProvider();
-        scene.Load(provider);
+        scene.Load(new SceneEnvironment(provider));
         using var target = provider.CreateTarget(new SurfaceSpec(4, 2));
         scene.Render(target);
 
@@ -286,7 +286,7 @@ public sealed class LayerCompositionTests
         layer.Root.Add(new RectDrawable(new Rect(0f, 0f, 2f, 2f), OpaqueRed));
 
         using var provider = new RasterSkiaSurfaceProvider();
-        scene.Load(provider);
+        scene.Load(new SceneEnvironment(provider));
         var compositor = Compositor(scene);
         using var fast = provider.CreateTarget(new SurfaceSpec(4, 2));
         using var canonical = provider.CreateTarget(new SurfaceSpec(4, 2));
@@ -323,7 +323,7 @@ public sealed class LayerCompositionTests
         var layer = scene.Layers.Add(new ScreenLayer { ClearColor = OpaqueBlack });
 
         using var provider = new RasterSkiaSurfaceProvider();
-        scene.Load(provider);
+        scene.Load(new SceneEnvironment(provider));
         var compositor = Compositor(scene);
         using var target = provider.CreateTarget(new SurfaceSpec(4, 2));
 
@@ -367,7 +367,7 @@ public sealed class LayerCompositionTests
         overlay.Root.Add(new RectDrawable(new Rect(6f, 1f, 1f, 1f), OpaqueGreen));
 
         using var provider = new RasterSkiaSurfaceProvider();
-        scene.Load(provider);
+        scene.Load(new SceneEnvironment(provider));
         scene.Tick(Ticks.At(0));
 
         using var first = provider.CreateTarget(new SurfaceSpec(8, 4));
@@ -403,7 +403,7 @@ public sealed class LayerCompositionTests
         var upper = scene.Layers.Add(new ScreenLayer { ClearColor = OpaqueBlue, Opacity = 0.5f });
 
         using var provider = new RasterSkiaSurfaceProvider();
-        scene.Load(provider);
+        scene.Load(new SceneEnvironment(provider));
         using var small = provider.CreateTarget(new SurfaceSpec(8, 4));
         using var large = provider.CreateTarget(new SurfaceSpec(16, 8));
 
@@ -452,7 +452,7 @@ public sealed class LayerCompositionTests
         framed.Root.Add(new RectDrawable(new Rect(6f, 1f, 1f, 1f), OpaqueGreen));
 
         using var provider = new RasterSkiaSurfaceProvider();
-        scene.Load(provider);
+        scene.Load(new SceneEnvironment(provider));
         scene.Tick(Ticks.At(0));
 
         using var target = provider.CreateTarget(new SurfaceSpec(8, 4));
@@ -485,18 +485,10 @@ public sealed class LayerCompositionTests
     [TestMethod]
     public void TheSceneAcquiresItsCompositorAtLoadAndDisposesItAtUnload()
     {
-        var withoutProvider = new Scene();
-        withoutProvider.Layers.Add(new ScreenLayer());
-        withoutProvider.Load();
-
-        Assert.IsNull(
-            withoutProvider.Compositor,
-            "A scene with no composition authority must not invent one.");
-
         var scene = new Scene { VirtualResolution = new Vector2(4f, 2f) };
         scene.Layers.Add(new ScreenLayer { ClearColor = OpaqueRed });
         using var provider = new RasterSkiaSurfaceProvider();
-        scene.Load(provider);
+        scene.Load(new SceneEnvironment(provider));
         var compositor = Compositor(scene);
         using var target = provider.CreateTarget(new SurfaceSpec(4, 2));
         scene.Render(target);

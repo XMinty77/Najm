@@ -55,7 +55,7 @@ public sealed class RenderTraverserTests
         var log = new RenderLog();
         var node = layer.Root.Add(new LoggingDrawable("node", log));
         node.Position = new Vector2(10f, 0f);
-        scene.Load();
+        scene.Load(TestEnvironment.Stub());
 
         var context = new RecordingContext(renderScale: 3f);
         scene.RenderDirect(context);
@@ -79,7 +79,7 @@ public sealed class RenderTraverserTests
         parent.Scale = new Vector2(2f, 2f);
         var child = parent.Add(new LoggingDrawable("child", log));
         child.Position = new Vector2(1f, 0f);
-        scene.Load();
+        scene.Load(TestEnvironment.Stub());
 
         var context = new RecordingContext(renderScale: 2f);
         scene.RenderDirect(context);
@@ -99,7 +99,7 @@ public sealed class RenderTraverserTests
         front.Add(new LoggingDrawable("front.child", log));
         var back = layer.Root.Add(new LoggingDrawable("back", log) { ZIndex = -1 });
         back.Add(new LoggingDrawable("back.child", log));
-        scene.Load();
+        scene.Load(TestEnvironment.Stub());
 
         scene.RenderDirect(new RecordingContext());
 
@@ -114,7 +114,7 @@ public sealed class RenderTraverserTests
         var layer = scene.Layers.Add(new HookLayer("layer", log));
         var node = layer.Root.Add(new LoggingDrawable("node", log));
         node.Position = new Vector2(5f, 5f);
-        scene.Load();
+        scene.Load(TestEnvironment.Stub());
 
         scene.RenderDirect(new RecordingContext(renderScale: 2f));
 
@@ -139,7 +139,7 @@ public sealed class RenderTraverserTests
         transparent.Opacity = 0f;
         var shown = scene.Layers.Add(new HookLayer("shown", log));
         shown.Root.Add(new LoggingDrawable("shown.node", log));
-        scene.Load();
+        scene.Load(TestEnvironment.Stub());
 
         scene.RenderDirect(new RecordingContext());
 
@@ -170,7 +170,7 @@ public sealed class RenderTraverserTests
         var invisibleChild = invisible.Add(new LoggingDrawable("invisible.child", log));
         var disabled = layer.Root.Add(new LoggingDrawable("disabled", log) { Enabled = false });
         var disabledChild = disabled.Add(new LoggingDrawable("disabled.child", log));
-        scene.Load();
+        scene.Load(TestEnvironment.Stub());
 
         scene.Tick(Ticks.At(0));
         scene.RenderDirect(new RecordingContext());
@@ -192,7 +192,7 @@ public sealed class RenderTraverserTests
         var layer = scene.Layers.Add(new ScreenLayer());
         var log = new RenderLog();
         layer.Root.Add(new LoggingDrawable("node", log)).Position = new Vector2(3f, 7f);
-        scene.Load();
+        scene.Load(TestEnvironment.Stub());
 
         scene.RenderDirect(new RecordingContext(renderScale: 1.5f));
 
@@ -206,7 +206,7 @@ public sealed class RenderTraverserTests
         var layer = scene.Layers.Add(new ScreenLayer());
         var log = new RenderLog();
         var node = layer.Root.Add(new LoggingDrawable("node", log));
-        scene.Load();
+        scene.Load(TestEnvironment.Stub());
 
         scene.RenderDirect(new RecordingContext());
 
@@ -229,7 +229,7 @@ public sealed class RenderTraverserTests
 
         Assert.ThrowsExactly<InvalidOperationException>(() => scene.RenderDirect(context));
 
-        scene.Load();
+        scene.Load(TestEnvironment.Stub());
         var reentrant = layer.Root.Add(new ReentrantDrawable(scene, context));
         scene.RenderDirect(context);
 
@@ -250,7 +250,7 @@ public sealed class RenderTraverserTests
         var log = new RenderLog();
         var node = layer.Root.Add(new LoggingDrawable("node", log));
         node.Position = new Vector2(2f, 3f);
-        scene.Load();
+        scene.Load(TestEnvironment.Stub());
         scene.Tick(Ticks.At(0));
 
         var world = node.WorldMatrix;
@@ -282,7 +282,7 @@ public sealed class RenderTraverserTests
         parent.Add(new SilentDrawable { ZIndex = 3 });
         parent.Add(new SilentDrawable { ZIndex = -3 });
         world.Root.Add(new SilentDrawable()).Position = new Vector2(1f, 2f);
-        scene.Load();
+        scene.Load(TestEnvironment.Stub());
         scene.Tick(Ticks.At(0));
 
         var context = new SilentContext();

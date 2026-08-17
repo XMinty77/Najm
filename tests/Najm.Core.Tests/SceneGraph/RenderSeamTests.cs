@@ -98,7 +98,7 @@ public sealed class RenderSeamTests
         var updates = new List<string>();
         var first = layer.Root.Add(new RecordingNode("first", updates) { ZIndex = 7 });
         var second = layer.Root.Add(new RecordingNode("second", updates));
-        scene.Load();
+        scene.Load(TestEnvironment.Stub());
 
         scene.Tick(RenderTicks.At(0));
 

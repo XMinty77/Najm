@@ -7,8 +7,9 @@ namespace Najm.Core;
 /// <para>
 /// This type is backend-facing engine machinery, not an authoring API. A compositor is per-scene
 /// and stateful: it owns the persistent per-layer targets and the accumulation surface, holds the
-/// frame counters, and is disposed with the scene. <see cref="Scene.Load()"/> acquires one from the
-/// environment's <see cref="ISurfaceProvider.CreateCompositor"/> and
+/// frame counters, and is disposed with the scene. <see cref="Scene.Load(SceneEnvironment)"/>
+/// acquires one from <see cref="SceneEnvironment.Surfaces"/> through
+/// <see cref="ISurfaceProvider.CreateCompositor"/> and
 /// <see cref="Scene.Render(IRenderTarget)"/> delegates to it.
 /// </para>
 /// <para>
