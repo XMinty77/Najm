@@ -193,19 +193,20 @@ commitment made on no evidence.
 
 **Docs:** Appendix B.2 writes `layer.Camera.FitRect(Bars.GeometryBounds)` — one
 argument. Fitting a rect requires knowing the viewport it must fit inside, and
-that is `Scene.VirtualResolution`, which the camera does not own and which does
-not exist in code yet.
+that is `Scene.VirtualResolution`, which the camera does not own.
 
 **Decision:** `FitRect(in Rect worldRect, in Vector2 virtualResolution)` for now.
 
-**Why:** a one-argument form has no honest source for the viewport size at this
-stage; inventing a default would silently frame against the wrong box. Once
-`Scene.VirtualResolution` lands, add the documented one-argument convenience on
-`WorldLayer2D` (which can reach its scene) forwarding to this, so author code
-reads as the reference shows.
+**Why:** a one-argument form had no honest source for the viewport size when this
+was decided; inventing a default would silently frame against the wrong box.
 
-**Status:** Open — the two-argument form is implemented, the documented
-one-argument form is not.
+**Status:** Open, and the blocking reason has since gone away.
+`Scene.VirtualResolution` now exists (`Scene.cs`), so the documented one-argument
+convenience can be added on `WorldLayer2D`, which can reach its scene, forwarding
+to the two-argument form. Author code should read as the reference shows. Note
+the extent a viewport'd layer frames is its viewport, not the scene's virtual
+resolution, so the convenience must forward the layer's framed extent rather than
+`Scene.VirtualResolution` unconditionally.
 
 ---
 
@@ -309,7 +310,68 @@ a viewport-covering fill before its tree, which reproduces composited semantics 
 plus one expectation flip, and it belongs with the `SceneEnvironment` slice that removes the
 need for it, not bolted onto the compositor slice.
 
-**Status:** Open — a known, tested divergence with a scheduled removal, not an accident.
+**Status:** Superseded. `SceneEnvironment` landed, `Load` always carries a provider,
+the fallback is deleted, and `Render` always composites. The expectation flipped to
+blue as scheduled.
+
+One thing this entry got wrong while it was open, caught by an independent audit:
+it framed the divergence as being about `ClearColor` alone. It was not. See entry
+11 — the direct path also drops layer `Opacity`, `Blend`, and `Viewport`. Recording
+only the disagreement I had happened to notice left the larger one unregistered.
+
+---
+
+## 11. `RenderDirect` drops layer presentation
+
+**Docs:** §5.3 and NAJM-COMPOSITOR I §3 require the direct path to clip each layer
+to its viewport rect, apply `Opacity` via `PushOpacity`, apply layer `Blend` via a
+context bracket where expressible, and open a per-layer isolation bracket when the
+subtree contains a non-default blend or a backdrop.
+
+**Current state:** `RenderTraverser.RenderLayers` does none of these. The only
+presentation it honours is the `Opacity == 0` skip. A layer at `Opacity = 0.5`
+renders fully opaque on the direct path and half-opaque through the compositor.
+
+**Why this matters more than it looks:** the shared traverser exists precisely so
+the two paths cannot drift, and they have drifted anyway — inside the type meant to
+prevent it. `VectorExporter` is a direct-path client by construction, so this will
+land as silently wrong SVG and PDF the moment the writers arrive, with no test
+failing.
+
+**Decision:** the direct path must apply viewport clip, opacity, and blend per
+layer. `ClearColor` needs an answer the reference never gives for this path: paint
+each participating layer's clear as a viewport-covering fill before its tree, which
+reproduces composited semantics for the `SrcOver` content M1 allows. Isolation
+brackets stay M2.
+
+**Status:** Open. Found by audit, not by a test — no test covered the direct path's
+presentation at all.
+
+---
+
+## 12. The ffmpeg frame sink was built ahead of its milestone
+
+**Docs:** `ROADMAP.md` places "FFmpeg sink and live capture" in M2. `PLAN.md`
+"Explicit deferrals" lists "Live capture, FFmpeg, and audio" as deferred until a
+named production pulls them forward, and the promotion rule requires an acceptance
+production that cannot be built without it.
+
+**What happened:** `FfmpegFrameSink` and its options and tests were built during
+the M1 delivery slice. Two real reasons drove it. The author's stated working
+method is to script animations with coroutines and video-export them, iterating
+headless; and this machine had ~3 GB free at the time, where a twelve-second 4K60
+PNG sequence is roughly 30 GB, so a sequence-first design would have failed on
+first use.
+
+**Assessment:** the constraint was real, but the promotion rule was not formally
+satisfied — no acceptance production existed yet, and `PLAN.md` resolution 8 had
+already designated the PNG still as the working loop for seeing changes. The
+substantive failure is process rather than code: this register's premise is that
+entries are added when the decision is made, and the largest scope departure in the
+tree went unrecorded until an audit found it.
+
+**Status:** Recorded retroactively, which is itself the defect. The code stands; the
+discipline slipped.
 
 ---
 

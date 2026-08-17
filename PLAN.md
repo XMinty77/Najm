@@ -58,8 +58,26 @@ the external GL-texture seam before Najm's native scientific 3D milestone.
   identity registration, projected FIFO deferred mutation, and allocation-free
   Update traversal are implemented. The portable drawing surface now includes
   paths, affine images, clips, transforms, true group opacity, tagged clear,
-  and the portable blend subset through the CPU Skia backend. World layers,
-  cameras, the shared render traverser, composition, and delivery remain.
+  and the portable blend subset through the CPU Skia backend.
+
+  Since landed: gradients through a value-keyed `Brush` and full stroke
+  geometry; the node render seam (`Render`, `Drawable`, `ZIndex`, bounds); the
+  portable engine-transform seam; `Camera2D`, `WorldLayer2D`, and layer
+  presentation state; the shared render traverser; the ordinary-layer
+  compositor with FP-1 and its equivalence test; `SceneEnvironment`, which made
+  every render composite; and offline delivery — frame sinks, the deterministic
+  fixed-step renderer, and PNG stills.
+
+  Remaining in phase 2: the minimal scheduler and tweens, node-tier composition
+  (§6.7 — `Opacity`, `Blend`, `Clip` are M1 scope per ROADMAP and absent), a
+  small effect path for glow and drop shadow, SVG/PDF writers over the direct
+  path, and the vector structural check.
+
+  Known defects found by audit and not yet fixed, tracked in
+  `docsref/DEVIATIONS.md`: the direct path drops layer presentation (entry 11);
+  descriptor caches never trim; `VisualBounds` is node-only where the spec
+  defines it as node-plus-descendants; mismatched-aspect output anchors
+  top-left instead of centring.
 - **Phase 3 foundation landed early:** pinned Latin Modern Roman/Math assets,
   provenance/licenses, and the internal HarfBuzz ownership/shaping path are in
   place, with explicit native lifetime, thread-affinity, pool reset/reuse, and
