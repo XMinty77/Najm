@@ -245,6 +245,36 @@ rediscovered by debugging wrong output.
 
 ---
 
+## 9. `IImage` admits externally owned, draw-stable images
+
+**Docs:** §4.4 describes `IImage` as an immutable, explicitly owned image snapshot, and §5.3
+adds that snapshots are valid only inside the current render call. Separately, §7.5 documents
+the external GPU interop pattern — wrapping an author's own GL texture as an `IImage` so a
+custom pipeline is "an ordinary drawable that owns its render-to-texture privately", realized
+per NAJM-SKIA I.7 through `GRBackendTexture` + `SKImage.FromTexture`.
+
+Those two statements conflict for the case the interop pattern exists to serve. An author
+re-rendering into their own texture every frame does not hold it immutable.
+
+**Decision:** `IImage` admits a second, explicitly documented kind: externally owned, where
+the caller guarantees stability **for the duration of a draw** rather than forever. Engine-
+produced images keep the immutable contract unchanged.
+
+**Why:** requiring true immutability would force a fresh texture per frame. `SKImage.FromTexture`
+only borrows — verified by re-wrapping the same texture id after disposing its image — so
+nothing would ever delete the discarded ones, and the documented pattern would leak a texture
+per frame by construction. Draw-stability is the weakest guarantee that keeps composition
+correct, and it leaves every other lifecycle rule intact: the image is still borrowed, still
+invalid outside the render call, still never stashed.
+
+Consequence for the realization: wrap once and cache it, invalidating only when the texture is
+reallocated. Re-wrapping per frame would allocate per frame and break the zero-allocation
+budget for no benefit, since a stable-size texture keeps its id.
+
+**Status:** Open — decided, not yet implemented. Belongs with the GPU surface provider.
+
+---
+
 ## Documentation conflicts
 
 Places where the reference set disagrees with itself. Recorded so the
