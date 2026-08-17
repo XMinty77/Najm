@@ -7,10 +7,13 @@ namespace Najm.Core;
 /// </summary>
 /// <remarks>
 /// <para>
-/// The camera reuses <see cref="Node2D.Position"/> and <see cref="Node2D.Rotation"/> as its framing
-/// values: <see cref="Node2D.Position"/> is the world point that lands at the center of virtual
-/// space, and <see cref="Node2D.Rotation"/> turns the view about that point.
-/// <see cref="Node2D.Scale"/> takes no part in framing; use <see cref="Zoom"/> instead.
+/// The camera reuses its translation and rotation as its framing values: the camera's world
+/// position is the world point that lands at the center of virtual space, and its world rotation
+/// turns the view about that point. A camera is an ordinary node, so a camera parented under a rig
+/// frames from where the rig puts it — for an unparented camera, its world values are exactly its
+/// <see cref="Node2D.Position"/> and <see cref="Node2D.Rotation"/>.
+/// <see cref="Node2D.Scale"/> takes no part in framing, and neither does any ancestor's scale; use
+/// <see cref="Zoom"/> instead.
 /// </para>
 /// <para>
 /// World space is Y-up and virtual space is Y-down with its origin at the top-left corner, so the
@@ -53,9 +56,11 @@ public class Camera2D : Node2D
     /// <param name="virtualResolution">The finite, positive virtual viewport size to frame against.</param>
     /// <remarks>
     /// The composition is
-    /// <c>Translate(-Position) * Rotate(-Rotation) * Scale(Zoom, -Zoom) * Translate(virtualResolution / 2)</c>,
-    /// so <see cref="Node2D.Position"/> lands exactly on the virtual center and increasing world Y
-    /// produces decreasing virtual Y.
+    /// <c>Translate(-WorldPosition) * Rotate(-WorldRotation) * Scale(Zoom, -Zoom) * Translate(virtualResolution / 2)</c>,
+    /// so <see cref="Node2D.WorldPosition"/> lands exactly on the virtual center and increasing
+    /// world Y produces decreasing virtual Y. The translation and rotation are the camera's world
+    /// values, so a parented camera rides its rig; the scale factor is <see cref="Zoom"/> alone, so
+    /// no ancestor's scale reaches the framing.
     /// </remarks>
     /// <exception cref="ArgumentOutOfRangeException">The virtual resolution is not finite and positive.</exception>
     /// <exception cref="InvalidOperationException">The mapping is not representable as a finite matrix.</exception>
@@ -63,9 +68,9 @@ public class Camera2D : Node2D
     {
         EnsureViewport(virtualResolution, nameof(virtualResolution));
 
-        var reducedRotation = Math.IEEERemainder(Rotation.Radians, Math.Tau);
+        var reducedRotation = Math.IEEERemainder(WorldRotationRadians(), Math.Tau);
         var worldToVirtual =
-            Matrix3x2.CreateTranslation(-Position) *
+            Matrix3x2.CreateTranslation(-WorldPosition) *
             Matrix3x2.CreateRotation((float)-reducedRotation) *
             Matrix3x2.CreateScale(zoom, -zoom) *
             Matrix3x2.CreateTranslation(virtualResolution * 0.5f);
@@ -102,9 +107,17 @@ public class Camera2D : Node2D
 
     /// <summary>Moves the camera so the given world point lands at the center of virtual space.</summary>
     /// <param name="worldPoint">The finite world point to center on.</param>
-    /// <remarks>This changes <see cref="Node2D.Position"/> only; <see cref="Zoom"/> and rotation are untouched.</remarks>
+    /// <remarks>
+    /// This changes <see cref="Node2D.Position"/> only; <see cref="Zoom"/> and rotation are
+    /// untouched. Framing follows the camera's world position, so a parented camera stores the point
+    /// in its parent's local space — an unparented camera stores it exactly as given.
+    /// </remarks>
     /// <exception cref="ArgumentOutOfRangeException">The point is not finite.</exception>
-    public void CenterOn(Vector2 worldPoint) => Position = worldPoint;
+    /// <exception cref="InvalidOperationException">The parent's world transform is singular.</exception>
+    public void CenterOn(Vector2 worldPoint) =>
+        Position = Parent is Node2D parent
+            ? Vector2.Transform(worldPoint, parent.InverseWorld)
+            : worldPoint;
 
     /// <summary>
     /// Centers on the given world rectangle and chooses the largest <see cref="Zoom"/> that keeps
@@ -114,8 +127,10 @@ public class Camera2D : Node2D
     /// <param name="virtualResolution">The finite, positive virtual viewport size to frame against.</param>
     /// <remarks>
     /// This fits rather than fills: the limiting axis touches the viewport edges exactly and the
-    /// other axis leaves slack. A non-zero <see cref="Node2D.Rotation"/> is accounted for by fitting
-    /// the rectangle's rotated extent, so the rectangle stays fully visible at any rotation.
+    /// other axis leaves slack. A non-zero world rotation — the camera's own plus its ancestors' —
+    /// is accounted for by fitting the rectangle's rotated extent, so the rectangle stays fully
+    /// visible at any rotation. Centering goes through <see cref="CenterOn(Vector2)"/>, so a
+    /// parented camera lands on the rectangle's world center rather than beside it.
     /// </remarks>
     /// <exception cref="ArgumentOutOfRangeException">
     /// The rectangle is degenerate or not finite, the virtual resolution is not finite and positive,
@@ -132,7 +147,7 @@ public class Camera2D : Node2D
                 "A camera cannot frame a rectangle with zero width or height.");
         }
 
-        var reducedRotation = Math.IEEERemainder(Rotation.Radians, Math.Tau);
+        var reducedRotation = Math.IEEERemainder(WorldRotationRadians(), Math.Tau);
         var cosine = Math.Abs(Math.Cos(reducedRotation));
         var sine = Math.Abs(Math.Sin(reducedRotation));
         var spanX = (worldRect.Width * cosine) + (worldRect.Height * sine);
@@ -157,9 +172,29 @@ public class Camera2D : Node2D
         }
 
         zoom = candidate;
-        Position = new Vector2(
+        CenterOn(new Vector2(
             worldRect.X + (worldRect.Width * 0.5f),
-            worldRect.Y + (worldRect.Height * 0.5f));
+            worldRect.Y + (worldRect.Height * 0.5f)));
+    }
+
+    /// <summary>
+    /// Returns the camera's world rotation in radians: its own <see cref="Node2D.Rotation"/> plus
+    /// every two-dimensional ancestor's, summed up the same chain the world matrix composes over.
+    /// </summary>
+    /// <remarks>
+    /// Summing the angles rather than decomposing <see cref="Node2D.WorldMatrix"/> is deliberate. A
+    /// decomposition carries an ancestor's scale into the result — a non-uniform one as skew, a
+    /// negative one as a half turn — and framing scale belongs to <see cref="Zoom"/> alone.
+    /// </remarks>
+    private double WorldRotationRadians()
+    {
+        var total = 0d;
+        for (Node2D? node = this; node is not null; node = node.Parent as Node2D)
+        {
+            total += node.Rotation.Radians;
+        }
+
+        return total;
     }
 
     private static void EnsureViewport(in Vector2 virtualResolution, string parameterName)

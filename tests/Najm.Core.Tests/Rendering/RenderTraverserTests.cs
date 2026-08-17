@@ -48,6 +48,31 @@ public sealed class RenderTraverserTests
     }
 
     [TestMethod]
+    public void AViewportdWorldLayerFramesItsViewportAndSitsAtTheViewportsFrameOrigin()
+    {
+        // An 8×4 frame at renderScale 2. The world layer occupies the virtual rect (4,0)-(8,4), so
+        // its camera frames a 4×4 extent whose centre is viewport-local virtual (2,2); the viewport
+        // origin carries that to frame virtual (6,2), which is device (12,4) at twice scale. One
+        // world unit of +Y is one virtual unit toward the top, device (12,2); one of +X is device
+        // (14,4). Framing the scene's 8×4 instead would put the world origin on frame virtual (4,2),
+        // i.e. device (8,4) — a frame-centred world that the viewport then merely crops.
+        var resolution = new Vector2(8f, 4f);
+        var viewport = new Rect(4f, 0f, 4f, 4f);
+        var world = new WorldLayer2D { Viewport = viewport };
+        var worldBase = RenderTraverser.ComputeLayerBase(world, resolution, 2f);
+
+        AssertPoint(new Vector2(12f, 4f), Vector2.Transform(Vector2.Zero, worldBase));
+        AssertPoint(new Vector2(12f, 2f), Vector2.Transform(Vector2.UnitY, worldBase));
+        AssertPoint(new Vector2(14f, 4f), Vector2.Transform(Vector2.UnitX, worldBase));
+
+        // A ScreenLayer has no camera, so its viewport reframes nothing: its nodes stay in absolute
+        // virtual coordinates and the backend places the target's device origin.
+        var screenBase = RenderTraverser.ComputeLayerBase(new ScreenLayer { Viewport = viewport }, resolution, 2f);
+
+        Assert.AreEqual(Matrix3x2.CreateScale(2f), screenBase);
+    }
+
+    [TestMethod]
     public void EngineTransformAppliesTheNodeWorldMatrixBeforeTheLayerBase()
     {
         var scene = new Scene { VirtualResolution = new Vector2(100f, 100f) };

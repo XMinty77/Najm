@@ -129,14 +129,32 @@ public static class RenderTraverser
     /// device pixels, above which every node's world matrix composes.
     /// </summary>
     /// <param name="layer">The layer to map.</param>
-    /// <param name="virtualResolution">The scene's finite, positive virtual resolution.</param>
+    /// <param name="virtualResolution">
+    /// The scene's finite, positive virtual resolution — the extent framed by a layer that occupies
+    /// the whole frame, which a viewport'd layer replaces with its own.
+    /// </param>
     /// <param name="renderScale">The finite, positive virtual-to-device pixel scale.</param>
     /// <remarks>
+    /// <para>
     /// The space mapping is <see cref="Camera2D.WorldToVirtual(in Vector2)"/> for a
     /// <see cref="WorldLayer2D"/> — the one place the Y flip lives — and identity for a
     /// <see cref="ScreenLayer"/>, whose coordinates already are virtual coordinates. Najm composes
     /// row vectors, so the returned value is <c>spaceMapping * scale(renderScale)</c>: a point is
     /// mapped into virtual space first and scaled to device pixels second.
+    /// </para>
+    /// <para>
+    /// The extent a camera frames is the layer's own: a <see cref="Layer.Viewport"/>'d world layer
+    /// frames its viewport rather than <paramref name="virtualResolution"/>, and the viewport's
+    /// origin then carries that viewport-local mapping back into absolute frame coordinates. Framing
+    /// against the frame instead would degrade the viewport into a crop of a frame-centered world.
+    /// A <see cref="ScreenLayer"/> has no camera and nothing to reframe, so its viewport stays a
+    /// crop of the absolute virtual coordinates its nodes are already written in.
+    /// </para>
+    /// <para>
+    /// The result is always an absolute frame-device transform. A backend staging a viewport'd layer
+    /// through a viewport-sized surface subtracts that surface's device origin itself, which is what
+    /// keeps the placement 1:1.
+    /// </para>
     /// </remarks>
     /// <exception cref="ArgumentNullException"><paramref name="layer"/> is null.</exception>
     /// <exception cref="ArgumentOutOfRangeException">
@@ -152,9 +170,14 @@ public static class RenderTraverser
         EnsureVirtualResolution(virtualResolution);
         EnsureRenderScale(renderScale);
 
-        var spaceMapping = layer is WorldLayer2D world
-            ? world.Camera.WorldToVirtual(virtualResolution)
-            : Matrix3x2.Identity;
+        var spaceMapping = Matrix3x2.Identity;
+        if (layer is WorldLayer2D world)
+        {
+            spaceMapping = layer.Viewport is { } viewport
+                ? world.Camera.WorldToVirtual(new Vector2(viewport.Width, viewport.Height)) *
+                    Matrix3x2.CreateTranslation(viewport.X, viewport.Y)
+                : world.Camera.WorldToVirtual(virtualResolution);
+        }
 
         return spaceMapping * Matrix3x2.CreateScale(renderScale);
     }

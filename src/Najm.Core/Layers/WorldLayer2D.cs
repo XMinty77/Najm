@@ -27,7 +27,8 @@ public class WorldLayer2D : Layer
     /// </summary>
     /// <remarks>
     /// A camera that already has a parent is used exactly where it sits, so a camera can ride any
-    /// node in this layer's subtree.
+    /// node in this layer's subtree: framing derives from the camera's world transform, not its
+    /// local one, so a camera parented under a moving rig frames from where the rig has carried it.
     /// </remarks>
     /// <exception cref="ArgumentNullException">The value is null.</exception>
     public Camera2D Camera

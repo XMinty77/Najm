@@ -175,7 +175,7 @@ public sealed class Transform2DTests
     }
 
     [TestMethod]
-    public void ScaleModeDoesNotAffectLogicalMatrices()
+    public void RequestingScalePinningFailsLoudlyAndLeavesTheTransformUntouched()
     {
         var parent = new Node2D
         {
@@ -192,9 +192,20 @@ public sealed class Transform2DTests
         var worldBefore = child.WorldMatrix;
         var inverseBefore = child.InverseWorld;
 
-        child.ScaleMode = ScaleMode.Virtual;
+        // Scale pinning (ARCHITECTURE 6.3) has no consumer: nothing in the traverser resolves a
+        // pinned node against the camera, so a node that accepted ScaleMode.Virtual would render
+        // exactly as ScaleMode.Inherit — a silent change of rendering semantics. The request is
+        // refused at the setter instead, on both the node and the transform it forwards to.
+        Assert.ThrowsExactly<NotSupportedException>(() => child.ScaleMode = ScaleMode.Virtual);
+        Assert.ThrowsExactly<NotSupportedException>(() => child.Transform.ScaleMode = ScaleMode.Virtual);
 
-        Assert.AreEqual(ScaleMode.Virtual, child.ScaleMode);
+        Assert.AreEqual(ScaleMode.Inherit, child.ScaleMode, "A refused request must not be stored.");
+        Assert.AreEqual(ScaleMode.Inherit, child.Transform.ScaleMode);
+
+        // Inherit is the one supported mode, and setting it explicitly still changes no matrix.
+        child.ScaleMode = ScaleMode.Inherit;
+
+        Assert.AreEqual(ScaleMode.Inherit, child.ScaleMode);
         Assert.AreEqual(localBefore, child.LocalMatrix);
         Assert.AreEqual(worldBefore, child.WorldMatrix);
         Assert.AreEqual(inverseBefore, child.InverseWorld);

@@ -173,6 +173,56 @@ public sealed class LayerCompositionTests
     }
 
     [TestMethod]
+    public void ViewportWorldLayer_FramesItsViewportRatherThanCroppingTheFrame()
+    {
+        // 8×4 virtual space at renderScale 1 over an opaque-red frame. The upper layer is a
+        // WorldLayer2D occupying the virtual rect (4,0)-(8,4), so its camera frames a 4×4 extent —
+        // the viewport's, not the scene's — and the viewport's own centre is virtual (2,2) inside
+        // that extent. The camera sits at the world origin at zoom 1, so world (0,0) lands there,
+        // which is frame virtual (4+2, 0+2) = (6,2).
+        //
+        // The 2×2 world square spans world (-1,-1)-(1,1). One world unit is one virtual unit and
+        // world +Y maps to virtual -Y, so it covers viewport-local [1,3)×[1,3) and therefore frame
+        // pixels x ∈ [5,7), y ∈ [1,3). The layer's blue clear fills its whole viewport, x ∈ [4,8).
+        //
+        // The defect this pins: framing against the scene's 8×4 instead would centre the square on
+        // the frame at virtual (4,2), spanning x ∈ [3,5) — of which only the single column x = 4
+        // falls inside the viewport's target. The wrong reading is one green column at x = 4 in
+        // rows 1-2; the right one is a 2×2 green block at x ∈ [5,7). A ScreenLayer cannot tell the
+        // two apart, because it has no camera and nothing to reframe.
+        const string ExpectedRows =
+            Red + Red + Red + Red + Blue + Blue + Blue + Blue +
+            Red + Red + Red + Red + Blue + Green + Green + Blue +
+            Red + Red + Red + Red + Blue + Green + Green + Blue +
+            Red + Red + Red + Red + Blue + Blue + Blue + Blue;
+
+        var scene = new Scene { VirtualResolution = new Vector2(8f, 4f) };
+        scene.Layers.Add(new ScreenLayer { ClearColor = OpaqueRed });
+        var framed = scene.Layers.Add(new WorldLayer2D
+        {
+            ClearColor = OpaqueBlue,
+            Viewport = new Rect(4f, 0f, 4f, 4f),
+        });
+        framed.Root.Add(new RectDrawable(new Rect(-1f, -1f, 2f, 2f), OpaqueGreen));
+
+        Assert.AreEqual(Vector2.Zero, framed.Camera.Position);
+        Assert.AreEqual(1f, framed.Camera.Zoom);
+
+        using var provider = new RasterSkiaSurfaceProvider();
+        scene.Load(new SceneEnvironment(provider));
+        using var target = provider.CreateTarget(new SurfaceSpec(8, 4));
+        scene.Render(target);
+
+        Assert.AreEqual(ExpectedRows, Hex(target));
+
+        // Its target is the viewport's own 4×4 pixels, and the frame-sized layer below it 8×4.
+        Assert.AreEqual(
+            (8L * 4L * 4L) + (4L * 4L * 4L),
+            Stats(scene).LayerTargetBytes,
+            "A viewport'd layer must be staged through a viewport-sized target.");
+    }
+
+    [TestMethod]
     public void MovingAViewportBetweenFrames_LeavesNothingOfThePreviousFrameBehind()
     {
         // The only contributing layer occupies a 2×2 viewport over an otherwise empty 8×4 frame, so

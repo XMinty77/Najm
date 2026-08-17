@@ -170,6 +170,13 @@ public sealed class SkiaCompositor : ICompositor
     /// Renders one layer into its own target: clear to the layer's color, then run the shared
     /// traverser. A layer whose subtree draws nothing still lands its clear color here.
     /// </summary>
+    /// <remarks>
+    /// The traverser installs absolute frame-device transforms for every layer, viewport'd or not —
+    /// including a viewport'd world layer's camera, which frames the viewport and is placed at the
+    /// viewport's frame origin by <see cref="RenderTraverser.ComputeLayerBase"/>. The scene's
+    /// virtual resolution is therefore what it is handed; <see cref="Placement.DeviceOffset"/> is
+    /// what brings the viewport's device origin onto this smaller surface.
+    /// </remarks>
     private static void StageLayer(
         SkiaRenderTarget layerTarget,
         Layer layer,

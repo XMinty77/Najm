@@ -84,6 +84,17 @@ public sealed class Transform2D
     /// <summary>
     /// Gets or sets camera-resolution scale behavior without changing logical matrices.
     /// </summary>
+    /// <remarks>
+    /// Only <see cref="Najm.Core.ScaleMode.Inherit"/>, the default, is implemented. Scale pinning
+    /// resolves per node against the layer's camera inside the render traverser, and that work has
+    /// not landed, so requesting <see cref="Najm.Core.ScaleMode.Virtual"/> is refused here rather
+    /// than accepted and then rendered as <see cref="Najm.Core.ScaleMode.Inherit"/> — an author's
+    /// unsupported request fails loudly instead of silently changing what is drawn.
+    /// </remarks>
+    /// <exception cref="ArgumentException">The value is not a defined scale mode.</exception>
+    /// <exception cref="NotSupportedException">
+    /// The value is <see cref="Najm.Core.ScaleMode.Virtual"/>.
+    /// </exception>
     public ScaleMode ScaleMode
     {
         get => scaleMode;
@@ -92,6 +103,15 @@ public sealed class Transform2D
             if (!Enum.IsDefined(value))
             {
                 throw new ArgumentException("The scale mode is not defined.", nameof(value));
+            }
+
+            if (value == Najm.Core.ScaleMode.Virtual)
+            {
+                throw new NotSupportedException(
+                    "Scale pinning (ScaleMode.Virtual, ARCHITECTURE section 6.3) is not implemented: " +
+                    "it lands with the pinning resolution in the render traverser. Until then only " +
+                    "ScaleMode.Inherit is supported, and this request is refused rather than " +
+                    "silently rendered as ScaleMode.Inherit.");
             }
 
             scaleMode = value;

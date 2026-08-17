@@ -266,9 +266,162 @@ public sealed class Camera2DTests
         Assert.AreEqual(new Vector2(11f, 12f), camera.WorldPosition);
     }
 
+    [TestMethod]
+    public void UnparentedFramingIsTheCamerasOwnLocalPositionAndRotation()
+    {
+        // The world-transform rule must be a no-op for an unparented camera: its world values are
+        // its local ones. Derived independently of the implementation, from the documented
+        // composition Translate(-p) * Rotate(-θ) * Scale(z, -z) * Translate(size / 2).
+        var camera = new Camera2D
+        {
+            Position = new Vector2(7f, -3f),
+            Rotation = Angle.Deg(33d),
+            Zoom = 2.5f,
+        };
+        var expected =
+            Matrix3x2.CreateTranslation(new Vector2(-7f, 3f)) *
+            Matrix3x2.CreateRotation((float)-Angle.Deg(33d).Radians) *
+            Matrix3x2.CreateScale(2.5f, -2.5f) *
+            Matrix3x2.CreateTranslation(HdCenter);
+
+        AssertMatrixClose(expected, camera.WorldToVirtual(Hd));
+    }
+
+    [TestMethod]
+    public void ParentedCameraFramesFromItsRigsWorldPositionAndNotItsLocalOne()
+    {
+        // 200×100 virtual space, centre (100, 50), zoom 1. A rig at world (3, 4) carries a camera
+        // whose own Position is the origin, so the camera sits at world (3, 4) and that point is
+        // what lands on the centre. The world origin is 3 left of and 4 below the camera, and the Y
+        // flip turns "below" into a larger virtual Y: (100 − 3, 50 + 4) = (97, 54).
+        // Framing from the camera's local position instead would have put the world origin on the
+        // centre — a follow-cam framing the wrong region entirely.
+        var virtualSize = new Vector2(200f, 100f);
+        var center = new Vector2(100f, 50f);
+        var rig = new Node2D { Position = new Vector2(3f, 4f) };
+        var camera = rig.Add(new Camera2D());
+
+        var matrix = camera.WorldToVirtual(virtualSize);
+
+        AssertVectorClose(center, Vector2.Transform(camera.WorldPosition, matrix));
+        AssertVectorClose(new Vector2(97f, 54f), Vector2.Transform(Vector2.Zero, matrix));
+
+        // The camera's own offset composes on top of the rig's: world (3+1, 4+2) = (4, 6), which
+        // moves the framed centre one right and two up, so the world origin lands at
+        // (100 − 4, 50 + 6) = (96, 56).
+        camera.Position = new Vector2(1f, 2f);
+        var moved = camera.WorldToVirtual(virtualSize);
+
+        Assert.AreEqual(new Vector2(4f, 6f), camera.WorldPosition);
+        AssertVectorClose(center, Vector2.Transform(new Vector2(4f, 6f), moved));
+        AssertVectorClose(new Vector2(96f, 56f), Vector2.Transform(Vector2.Zero, moved));
+    }
+
+    [TestMethod]
+    public void CameraUnderARotatedAncestorPicksUpThatRotation()
+    {
+        // The rig turns a quarter turn about the world origin, so a camera at rig-local (2, 0) sits
+        // at world (0, 2) and views the world turned a quarter turn. Under that view, one world
+        // unit of +X from the camera maps one virtual unit of +Y (the same relation the unrotated
+        // case gives for +X→+X, turned by 90° and then Y-flipped): (100, 51).
+        // Reading the camera's local rotation instead would leave the view unturned and land (101, 50).
+        var virtualSize = new Vector2(200f, 100f);
+        var center = new Vector2(100f, 50f);
+        var rig = new Node2D { Rotation = Angle.Deg(90d) };
+        var camera = rig.Add(new Camera2D { Position = new Vector2(2f, 0f) });
+
+        var matrix = camera.WorldToVirtual(virtualSize);
+
+        AssertVectorClose(new Vector2(0f, 2f), camera.WorldPosition);
+        AssertVectorClose(center, Vector2.Transform(new Vector2(0f, 2f), matrix));
+        AssertVectorClose(new Vector2(100f, 51f), Vector2.Transform(new Vector2(1f, 2f), matrix));
+
+        // Rotation accumulates up the chain exactly as the world matrix does: the rig's 90° plus
+        // the camera's own -30° is a 60° view, indistinguishable from an unparented camera holding
+        // the whole 60° at the same world position.
+        camera.Rotation = Angle.Deg(-30d);
+        var unparented = new Camera2D { Position = camera.WorldPosition, Rotation = Angle.Deg(60d) };
+
+        AssertMatrixClose(
+            unparented.WorldToVirtual(virtualSize),
+            camera.WorldToVirtual(virtualSize),
+            1e-5f);
+    }
+
+    [TestMethod]
+    public void AncestorScaleNeverReachesTheFraming()
+    {
+        // Scale is Zoom's job alone, ancestor scale included. A rig scaled 3× at world (5, -2)
+        // carries a camera at rig-local origin, so the camera still sits at world (5, -2) and one
+        // world unit must still be one virtual unit: world (6, -2) lands one virtual unit right of
+        // the centre. A rig scale that leaked in would have made it three.
+        var virtualSize = new Vector2(200f, 100f);
+        var center = new Vector2(100f, 50f);
+        var rig = new Node2D { Position = new Vector2(5f, -2f), Scale = new Vector2(3f, 3f) };
+        var camera = rig.Add(new Camera2D());
+
+        var matrix = camera.WorldToVirtual(virtualSize);
+
+        AssertVectorClose(center, Vector2.Transform(new Vector2(5f, -2f), matrix));
+        AssertVectorClose(center + new Vector2(1f, 0f), Vector2.Transform(new Vector2(6f, -2f), matrix));
+        Assert.AreEqual(1f, camera.Zoom, "The rig's scale must not have moved the camera's zoom.");
+
+        // A non-uniform, mirroring, rotated rig is the hard case: the rotation must survive and the
+        // scale must not, which is exactly an unparented camera holding that rotation at the same
+        // world position. A decomposition of the world matrix would have skewed the framing here.
+        rig.Scale = new Vector2(-2f, 0.5f);
+        rig.Rotation = Angle.Deg(90d);
+        var unparented = new Camera2D { Position = camera.WorldPosition, Rotation = Angle.Deg(90d) };
+
+        AssertMatrixClose(unparented.WorldToVirtual(virtualSize), camera.WorldToVirtual(virtualSize), 1e-5f);
+
+        // The camera's own scale is just as inert, which is what the class already promises.
+        camera.Scale = new Vector2(7f, 7f);
+
+        AssertMatrixClose(unparented.WorldToVirtual(virtualSize), camera.WorldToVirtual(virtualSize), 1e-5f);
+    }
+
+    [TestMethod]
+    public void CenterOnAndFitRectPlaceAParentedCameraByItsWorldPosition()
+    {
+        // Both helpers are documented in world terms, and framing now reads the world position, so
+        // both must land the camera's world position on the world point. Under a rig at (10, 0),
+        // centring on world (4, 9) is the rig-local position (-6, 9).
+        var rig = new Node2D { Position = new Vector2(10f, 0f) };
+        var camera = rig.Add(new Camera2D());
+
+        camera.CenterOn(new Vector2(4f, 9f));
+
+        Assert.AreEqual(new Vector2(-6f, 9f), camera.Position);
+        AssertVectorClose(new Vector2(4f, 9f), camera.WorldPosition);
+        AssertVectorClose(HdCenter, Vector2.Transform(new Vector2(4f, 9f), camera.WorldToVirtual(Hd)));
+
+        // The 40×10 rect fits width-limited at 1920/40 = 48, centred on the world origin, so the
+        // camera's world position is the origin and its rig-local position is (-10, 0).
+        camera.FitRect(new Rect(-20f, -5f, 40f, 10f), Hd);
+
+        Assert.AreEqual(48f, camera.Zoom, 1e-4f);
+        Assert.AreEqual(new Vector2(-10f, 0f), camera.Position);
+        AssertVectorClose(Vector2.Zero, camera.WorldPosition);
+
+        var matrix = camera.WorldToVirtual(Hd);
+        Assert.AreEqual(0f, Vector2.Transform(new Vector2(-20f, 5f), matrix).X, 1e-3f);
+        Assert.AreEqual(Hd.X, Vector2.Transform(new Vector2(20f, -5f), matrix).X, 1e-3f);
+    }
+
     private static void AssertVectorClose(Vector2 expected, Vector2 actual, float tolerance = 1e-4f)
     {
         Assert.AreEqual(expected.X, actual.X, tolerance, $"Expected {expected} but found {actual}.");
         Assert.AreEqual(expected.Y, actual.Y, tolerance, $"Expected {expected} but found {actual}.");
+    }
+
+    private static void AssertMatrixClose(Matrix3x2 expected, Matrix3x2 actual, float tolerance = 1e-4f)
+    {
+        Assert.AreEqual(expected.M11, actual.M11, tolerance, $"Expected {expected} but found {actual}.");
+        Assert.AreEqual(expected.M12, actual.M12, tolerance, $"Expected {expected} but found {actual}.");
+        Assert.AreEqual(expected.M21, actual.M21, tolerance, $"Expected {expected} but found {actual}.");
+        Assert.AreEqual(expected.M22, actual.M22, tolerance, $"Expected {expected} but found {actual}.");
+        Assert.AreEqual(expected.M31, actual.M31, tolerance, $"Expected {expected} but found {actual}.");
+        Assert.AreEqual(expected.M32, actual.M32, tolerance, $"Expected {expected} but found {actual}.");
     }
 }

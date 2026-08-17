@@ -38,6 +38,15 @@ public class Node2D : Node
     }
 
     /// <summary>Gets or sets camera-resolution scale behavior.</summary>
+    /// <remarks>
+    /// Only <see cref="Najm.Core.ScaleMode.Inherit"/>, the default, is implemented; see
+    /// <see cref="Transform2D.ScaleMode"/> for why requesting scale pinning fails instead of being
+    /// accepted and ignored.
+    /// </remarks>
+    /// <exception cref="ArgumentException">The value is not a defined scale mode.</exception>
+    /// <exception cref="NotSupportedException">
+    /// The value is <see cref="Najm.Core.ScaleMode.Virtual"/>.
+    /// </exception>
     public ScaleMode ScaleMode
     {
         get => Transform.ScaleMode;
