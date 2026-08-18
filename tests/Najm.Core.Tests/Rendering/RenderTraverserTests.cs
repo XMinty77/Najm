@@ -298,6 +298,117 @@ public sealed class RenderTraverserTests
     }
 
     [TestMethod]
+    public void EveryParticipatingLayerIsWalkedInsideABracketCarryingItsPresentation()
+    {
+        // The direct path binds no per-layer target, so a layer's clear, opacity, blend, and
+        // viewport can only reach the backend on the bracket. A layer that cannot contribute must
+        // not even open one: its clear is content it does not get to contribute, exactly as the
+        // compositor never binds or clears it.
+        var red = Color.Srgb(1f, 0f, 0f);
+        var blue = Color.Srgb(0f, 0f, 1f);
+        var scene = new Scene { VirtualResolution = new Vector2(8f, 4f) };
+        scene.Layers.Add(new ScreenLayer { ClearColor = red });
+        scene.Layers.Add(new ScreenLayer { Opacity = 0.5f, Blend = BlendMode.Multiply });
+        scene.Layers.Add(new ScreenLayer { ClearColor = blue, Visible = false });
+        scene.Layers.Add(new ScreenLayer { ClearColor = blue, Opacity = 0f });
+        scene.Layers.Add(new ScreenLayer { ClearColor = blue, Viewport = new Rect(2f, 1f, 3f, 2f) });
+        scene.Load(TestEnvironment.Stub());
+
+        var context = new RecordingContext(renderScale: 2f);
+        scene.RenderDirect(context);
+
+        Assert.HasCount(3, context.Brackets, "The invisible and zero-opacity layers open none.");
+        Assert.AreEqual(new LayerBracket(red, 1f, BlendMode.SrcOver, null), context.Brackets[0]);
+        Assert.AreEqual(
+            new LayerBracket(Color.Transparent, 0.5f, BlendMode.Multiply, null),
+            context.Brackets[1]);
+
+        // The viewport rides the bracket in device pixels: (2,1,3,2) virtual at renderScale 2 is
+        // (4,2) with a 6×4 extent, which is the same integer rectangle the compositor would have
+        // staged that layer through.
+        Assert.AreEqual(
+            new LayerBracket(blue, 1f, BlendMode.SrcOver, new Rect(4f, 2f, 6f, 4f)),
+            context.Brackets[2]);
+        Assert.AreEqual(0, context.BracketDepth, "Every bracket the walk opened must have closed.");
+        Assert.AreEqual(3, context.BracketCount);
+    }
+
+    [TestMethod]
+    public void TheBracketEnclosesBothLayerHooksAndEveryEngineTransform()
+    {
+        // The structural point of the whole seam: the engine transform is set per node *inside* an
+        // open bracket. Author state cannot do this — SetEngineTransform rejects an outstanding
+        // author push — which is why the bracket is engine-owned and counted separately.
+        var scene = new Scene();
+        var log = new RenderLog();
+        var layer = scene.Layers.Add(new HookLayer("layer", log));
+        layer.Root.Add(new LoggingDrawable("node", log));
+        scene.Load(TestEnvironment.Stub());
+
+        var context = new RecordingContext();
+        scene.RenderDirect(context);
+
+        // Bracket, then the layer base, then OnBeforeRender, then one engine transform for the
+        // layer's own root node and one for the drawable beneath it, then the layer base again for
+        // OnAfterRender, then the close.
+        Assert.AreEqual(
+            "open1,engine,layer.before,engine,engine,node,engine,layer.after,close1",
+            context.Events);
+    }
+
+    [TestMethod]
+    public void ABracketsDeviceViewportRoundsExactlyAsTheCompositorPlacesItsSurface()
+    {
+        // Origin rounds to the pixel grid, extent rounds outward — SkiaCompositor.ResolvePlacement's
+        // rule, so a fractional viewport covers the same pixels whichever path draws it.
+        // At renderScale 2: x = round(2.4·2) = round(4.8) = 5, y = round(1.6·2) = round(3.2) = 3,
+        // width = ceil(3.3·2) = ceil(6.6) = 7, height = ceil(2.2·2) = ceil(4.4) = 5.
+        var scene = new Scene { VirtualResolution = new Vector2(16f, 8f) };
+        var framed = scene.Layers.Add(new ScreenLayer { Viewport = new Rect(2.4f, 1.6f, 3.3f, 2.2f) });
+        scene.Load(TestEnvironment.Stub());
+
+        var context = new RecordingContext(renderScale: 2f);
+        scene.RenderDirect(context);
+
+        Assert.AreEqual(new Rect(5f, 3f, 7f, 5f), context.Brackets[0].Viewport);
+
+        // A midpoint origin pins the tie-break as MathF.Round's, which is to even: 1.25·2 = 2.5 → 2,
+        // and 3.75·2 = 7.5 → 8. Rounding half away from zero would give 3 and 8 instead.
+        framed.Viewport = new Rect(1.25f, 3.75f, 1f, 1f);
+        var second = new RecordingContext(renderScale: 2f);
+        scene.RenderDirect(second);
+
+        Assert.AreEqual(new Rect(2f, 8f, 2f, 2f), second.Brackets[0].Viewport);
+
+        // A full-frame layer has no viewport at all, and must not be handed a frame-sized rectangle
+        // that would clip geometry the compositor lets overhang its target.
+        framed.Viewport = null;
+        var third = new RecordingContext(renderScale: 2f);
+        scene.RenderDirect(third);
+
+        Assert.IsNull(third.Brackets[0].Viewport);
+    }
+
+    [TestMethod]
+    public void ABracketRejectsAnOpacityOutsideTheUnitInterval()
+    {
+        foreach (var invalid in new[] { -0.001f, 1.001f, float.NaN, float.PositiveInfinity })
+        {
+            var rejected = Assert.ThrowsExactly<ArgumentOutOfRangeException>(
+                () => _ = new LayerBracket(Color.Black, invalid, BlendMode.SrcOver, null));
+            Assert.AreEqual("opacity", rejected.ParamName);
+        }
+
+        var bracket = new LayerBracket(Color.Black, 0.5f, BlendMode.Screen, new Rect(1f, 2f, 3f, 4f));
+
+        Assert.AreEqual(Color.Black, bracket.Clear);
+        Assert.AreEqual(0.5f, bracket.Opacity);
+        Assert.AreEqual(BlendMode.Screen, bracket.Blend);
+        Assert.AreEqual(new Rect(1f, 2f, 3f, 4f), bracket.Viewport);
+        Assert.AreEqual(default, new LayerBracket(Color.Transparent, 0f, BlendMode.SrcOver, null));
+    }
+
+    [TestMethod]
     public void WarmRenderTraversalAllocatesNoManagedMemory()
     {
         var scene = new Scene();
@@ -321,9 +432,11 @@ public sealed class RenderTraverserTests
             () => scene.RenderDirect(context),
             "The warm render traversal");
 
-        // Four drawables, every render. The probe owns the render count, so the expected draw count
-        // is derived from it rather than fixed.
+        // Four drawables and two layer brackets, every render. The probe owns the render count, so
+        // both expectations are derived from it rather than fixed.
         Assert.AreEqual((64 + reading.Invocations) * 4, context.DrawCount);
+        Assert.AreEqual((64 + reading.Invocations) * 2, context.BracketCount);
+        Assert.AreEqual(0, context.BracketDepth);
     }
 
     private static void AssertPoint(Vector2 expected, Vector2 actual)
@@ -350,8 +463,12 @@ public sealed class RenderTraverserTests
     {
         internal int UpdateCount { get; private set; }
 
-        public override void Render(IDrawContext2D context) =>
-            log.Add(name, ((RecordingContext)context).Engine);
+        public override void Render(IDrawContext2D context)
+        {
+            var recording = (RecordingContext)context;
+            log.Add(name, recording.Engine);
+            recording.Note(name);
+        }
 
         protected override void Update(in TickContext tick) => UpdateCount++;
     }
@@ -382,11 +499,19 @@ public sealed class RenderTraverserTests
 
     private sealed class HookLayer(string name, RenderLog log) : ScreenLayer
     {
-        protected override void OnBeforeRender(IDrawContext2D context) =>
-            log.Add($"{name}.before", ((RecordingContext)context).Engine);
+        protected override void OnBeforeRender(IDrawContext2D context)
+        {
+            var recording = (RecordingContext)context;
+            log.Add($"{name}.before", recording.Engine);
+            recording.Note($"{name}.before");
+        }
 
-        protected override void OnAfterRender(IDrawContext2D context) =>
-            log.Add($"{name}.after", ((RecordingContext)context).Engine);
+        protected override void OnAfterRender(IDrawContext2D context)
+        {
+            var recording = (RecordingContext)context;
+            log.Add($"{name}.after", recording.Engine);
+            recording.Note($"{name}.after");
+        }
     }
 
     private class SilentContext : IDrawContext2D
@@ -403,6 +528,12 @@ public sealed class RenderTraverserTests
 
         internal int DrawCount { get; private set; }
 
+        /// <summary>Gets how many engine layer brackets are open right now.</summary>
+        internal int BracketDepth { get; private set; }
+
+        /// <summary>Gets how many engine layer brackets have been opened in total.</summary>
+        internal int BracketCount { get; private set; }
+
         public void Clear(Color color)
         {
         }
@@ -415,6 +546,22 @@ public sealed class RenderTraverserTests
 
         public virtual void SetEngineTransform(in Matrix3x2 engineToDevice)
         {
+        }
+
+        public virtual void BeginLayerBracket(in LayerBracket bracket)
+        {
+            BracketDepth++;
+            BracketCount++;
+        }
+
+        public virtual void EndLayerBracket()
+        {
+            if (BracketDepth == 0)
+            {
+                throw new InvalidOperationException("No engine layer bracket is open.");
+            }
+
+            BracketDepth--;
         }
 
         public void PushTransform(in Matrix3x2 localTransform)
@@ -448,9 +595,37 @@ public sealed class RenderTraverserTests
 
     private sealed class RecordingContext(float renderScale = 1f) : SilentContext(renderScale)
     {
+        private readonly List<LayerBracket> brackets = [];
+        private readonly List<string> events = [];
+
         internal Matrix3x2 Engine { get; private set; }
 
-        public override void SetEngineTransform(in Matrix3x2 engineToDevice) => Engine = engineToDevice;
+        /// <summary>Gets every bracket opened, in the order the traverser opened them.</summary>
+        internal IReadOnlyList<LayerBracket> Brackets => brackets;
+
+        /// <summary>Gets the interleaving of brackets, engine transforms, hooks, and node paints.</summary>
+        internal string Events => string.Join(',', events);
+
+        internal void Note(string what) => events.Add(what);
+
+        public override void SetEngineTransform(in Matrix3x2 engineToDevice)
+        {
+            Engine = engineToDevice;
+            events.Add("engine");
+        }
+
+        public override void BeginLayerBracket(in LayerBracket bracket)
+        {
+            base.BeginLayerBracket(bracket);
+            brackets.Add(bracket);
+            events.Add($"open{BracketDepth}");
+        }
+
+        public override void EndLayerBracket()
+        {
+            events.Add($"close{BracketDepth}");
+            base.EndLayerBracket();
+        }
     }
 
     private static class Ticks

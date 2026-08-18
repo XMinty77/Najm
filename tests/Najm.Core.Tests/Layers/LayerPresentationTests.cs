@@ -146,6 +146,14 @@ public sealed class LayerPresentationTests
         {
         }
 
+        public void BeginLayerBracket(in LayerBracket bracket)
+        {
+        }
+
+        public void EndLayerBracket()
+        {
+        }
+
         public void PushTransform(in Matrix3x2 localTransform)
         {
         }

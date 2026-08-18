@@ -185,12 +185,18 @@ public class Scene
     /// <param name="context">The borrowed context every layer paints into, in order.</param>
     /// <remarks>
     /// <para>
-    /// This is the direct path: no per-layer target is bound and no surface is cleared, so the
-    /// caller owns both the pass and whatever the context already holds. The render scale is the
-    /// one the context's pass was begun with, because
+    /// This is the direct path: no per-layer target is bound and the surface itself is never
+    /// cleared, so the caller owns both the pass and whatever the context already holds. The render
+    /// scale is the one the context's pass was begun with, because
     /// <see cref="IDrawContext2D.SetEngineTransform(in Matrix3x2)"/> replaces the pass baseline
     /// wholesale and the traverser must therefore fold that scale back into every transform it
     /// installs.
+    /// </para>
+    /// <para>
+    /// Every participating layer's presentation still applies. Each is walked inside an engine layer
+    /// bracket carrying its clear, viewport, opacity, and blend, so the frame matches what
+    /// <see cref="Render(IRenderTarget)"/> composites: a layer's <see cref="Layer.ClearColor"/> is
+    /// content that fills its region, and its opacity and blend apply to the whole layer as a group.
     /// </para>
     /// <para>Rendering is idempotent, exactly as <see cref="Render(IRenderTarget)"/> is.</para>
     /// </remarks>

@@ -19,7 +19,10 @@ namespace Najm.Core;
 /// node receives its own engine transform through
 /// <see cref="IDrawContext2D.SetEngineTransform(in Matrix3x2)"/> before its
 /// <see cref="Node.Render(IDrawContext2D)"/> runs, so the traverser never brackets the walk in
-/// author state — an outstanding push would make the next engine transform illegal.
+/// author state — an outstanding push would make the next engine transform illegal. Where the walk
+/// does need a bracket, it uses the engine's own:
+/// <see cref="IDrawContext2D.BeginLayerBracket(in LayerBracket)"/>, whose depth is tracked apart
+/// from author state precisely so a per-node transform can be installed inside it.
 /// </para>
 /// <para>
 /// Traversal reads the tree and writes only to the context: it never mutates observable scene
@@ -37,9 +40,21 @@ public static class RenderTraverser
     /// <param name="virtualResolution">The scene's finite, positive virtual resolution.</param>
     /// <param name="renderScale">The finite, positive virtual-to-device pixel scale.</param>
     /// <remarks>
-    /// This is the direct path's walk: no per-layer target is bound and no per-layer isolation
-    /// bracket is opened. Layers that do not participate — see
-    /// <see cref="ParticipatesInRender(Layer)"/> — are skipped whole.
+    /// <para>
+    /// This is the direct path's walk: no per-layer target is bound, and each participating layer's
+    /// presentation is carried by an engine layer bracket instead — its clear, viewport, opacity,
+    /// and blend, which is everything the compositor would have applied by staging the layer and
+    /// merging it. The bracket is what keeps the two paths from drifting; without it a layer at half
+    /// opacity would render fully opaque here and half-opaque through the compositor.
+    /// </para>
+    /// <para>
+    /// Layers that do not participate — see <see cref="ParticipatesInRender(Layer)"/> — are skipped
+    /// whole: no bracket, no clear, no walk, no hooks.
+    /// </para>
+    /// <para>
+    /// Node-tier isolation brackets, the ones a non-default blend or a backdrop read inside a
+    /// subtree would demand, are not opened and are not approximated.
+    /// </para>
     /// </remarks>
     /// <exception cref="ArgumentNullException">
     /// <paramref name="layers"/> or <paramref name="context"/> is null.
@@ -61,7 +76,25 @@ public static class RenderTraverser
 
         for (var index = 0; index < layers.Count; index++)
         {
-            RenderLayer(layers[index], context, virtualResolution, renderScale);
+            var layer = layers[index];
+            if (!ParticipatesInRender(layer))
+            {
+                continue;
+            }
+
+            context.BeginLayerBracket(
+                new LayerBracket(
+                    layer.ClearColor,
+                    layer.Opacity,
+                    layer.Blend,
+                    ComputeDeviceViewport(layer, renderScale)));
+            RenderLayer(layer, context, virtualResolution, renderScale);
+
+            // Not in a finally, for the reason the compositor does not end its pass in one either:
+            // a walk that threw has already lost the frame, and closing the bracket here would
+            // replace the author's exception with whatever the half-drawn group produced. The
+            // context reports the unbalanced bracket when the pass ends.
+            context.EndLayerBracket();
         }
     }
 
@@ -74,9 +107,18 @@ public static class RenderTraverser
     /// <param name="virtualResolution">The scene's finite, positive virtual resolution.</param>
     /// <param name="renderScale">The finite, positive virtual-to-device pixel scale.</param>
     /// <remarks>
+    /// <para>
     /// A layer that does not participate in rendering is skipped whole: its hooks do not run and
     /// its tree is not walked. Both hooks see the context in layer space, so the layer base is
     /// reinstalled after the walk before <c>OnAfterRender</c> runs.
+    /// </para>
+    /// <para>
+    /// This walks one layer's contents and applies none of its presentation. A caller that binds a
+    /// target per layer applies clear, opacity, blend, and placement at its own merge — see
+    /// <c>ICompositor</c> — and a caller sharing one context opens an engine layer bracket around
+    /// this call, which is what <see cref="RenderLayers(LayerStack, IDrawContext2D, in Vector2, float)"/>
+    /// does. Doing both would apply the layer's presentation twice.
+    /// </para>
     /// </remarks>
     /// <exception cref="ArgumentNullException">
     /// <paramref name="layer"/> or <paramref name="context"/> is null.
@@ -180,6 +222,30 @@ public static class RenderTraverser
         }
 
         return spaceMapping * Matrix3x2.CreateScale(renderScale);
+    }
+
+    /// <summary>
+    /// Returns the device-pixel region a layer's bracket clips to and fills, or null when the layer
+    /// occupies the whole frame.
+    /// </summary>
+    /// <remarks>
+    /// The origin is rounded to the pixel grid and the extent is rounded outward, which is exactly
+    /// how the compositor sizes and places the surface it stages a viewport'd layer through. Using
+    /// the same rounding means a fractional viewport covers the same pixels on both paths instead of
+    /// producing a clip edge on one and a surface edge on the other.
+    /// </remarks>
+    private static Rect? ComputeDeviceViewport(Layer layer, float renderScale)
+    {
+        if (layer.Viewport is not { } viewport)
+        {
+            return null;
+        }
+
+        return new Rect(
+            MathF.Round(viewport.X * renderScale),
+            MathF.Round(viewport.Y * renderScale),
+            MathF.Ceiling(viewport.Width * renderScale),
+            MathF.Ceiling(viewport.Height * renderScale));
     }
 
     /// <summary>

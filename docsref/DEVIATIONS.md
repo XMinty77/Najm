@@ -344,8 +344,32 @@ each participating layer's clear as a viewport-covering fill before its tree, wh
 reproduces composited semantics for the `SrcOver` content M1 allows. Isolation
 brackets stay M2.
 
-**Status:** Open. Found by audit, not by a test — no test covered the direct path's
-presentation at all.
+**Status:** Implemented. The direct path now opens a per-layer bracket carrying clear,
+opacity, blend, and an optional device-space viewport, and every direct-path frame is
+asserted byte-identical to the composited frame of the same scene — the property the
+shared traverser exists to guarantee, which no individual property test would have
+caught.
+
+Closing it required an M1 ancestor of the composition SPI. `SetEngineTransform` rejects
+a non-empty author stack and the traverser calls it per node, so the walk could not be
+wrapped in `PushOpacity`. `BeginLayerBracket`/`EndLayerBracket` are engine-owned and
+tracked at a separate depth: an open bracket is tolerated, outstanding author pushes are
+still refused, and `EndPass` names the two kinds separately. `BeginUnit`/`BeginMask`,
+with effects and masks, remain M2.
+
+Two decisions inside it are worth keeping visible. The clear colour rides on the bracket
+rather than arriving through a new rect-fill primitive, which would have meant either
+widening the drawing surface or building a `PathBuilder` per layer per frame. And the
+viewport is in **device** pixels, because the engine transform inside the bracket varies
+per node, so a viewport in any local space would have no fixed meaning; it rounds its
+origin and ceils its extent by the same rule the compositor uses, so a fractional
+viewport covers identical pixels on both paths.
+
+FP-5, the reference's direct-path bracket skip, is deliberately **not** implemented. It
+needs the subtree predicate that is M2, and skipping unconditionally would let a
+non-default node blend composite against the frame on the direct path while compositing
+against its own layer on the composited one. A test pins that, and the naive skip fails
+exactly it.
 
 ---
 

@@ -26,13 +26,21 @@ namespace Najm.Skia;
 /// scratch path and paint are backend-owned, rewound or reset, and reused for every draw. Rewinding
 /// the path retains its native storage for allocation-free drawing at a stable command count.
 /// State pushes share one strict typed LIFO stack and are balanced automatically when the owning
-/// target is disposed. The native objects Skia forces us to allocate for brushes and dashes live in
+/// target is disposed. Engine layer brackets are counted on their own, apart from that stack: the
+/// engine opens them around whole layers and installs its per-node transforms inside them, which
+/// author state may never do. The native objects Skia forces us to allocate for brushes and dashes live in
 /// context-owned caches keyed by the portable descriptor <em>value</em>: the first appearance of a
 /// gradient or dash allocates, and every repetition is a dictionary hit that allocates nothing.
 /// </remarks>
 public sealed class SkiaDrawContext2D : IDrawContext2D
 {
     private const int InitialStateCapacity = 16;
+
+    /// <summary>
+    /// Native save slots one engine layer bracket occupies: the viewport clip and the group layer.
+    /// The count is fixed, so a bracket's baseline is arithmetic rather than a second stack.
+    /// </summary>
+    private const int SaveSlotsPerBracket = 2;
 
     private static readonly SKSamplingOptions LinearSampling = new(
         SKFilterMode.Linear,
@@ -53,6 +61,8 @@ public sealed class SkiaDrawContext2D : IDrawContext2D
     private RenderCaps caps;
     private float renderScale;
     private int stateDepth;
+    private int engineBracketDepth;
+    private int engineSlotBaseline;
     private bool passActive;
     private bool disposed;
 
@@ -60,6 +70,7 @@ public sealed class SkiaDrawContext2D : IDrawContext2D
     {
         this.canvas = canvas ?? throw new ArgumentNullException(nameof(canvas));
         baseSaveCount = canvas.SaveCount;
+        engineSlotBaseline = baseSaveCount;
         SurfaceSpec = surfaceSpec;
     }
 
@@ -184,6 +195,95 @@ public sealed class SkiaDrawContext2D : IDrawContext2D
         }
 
         InstallEngineTransform(engineToDevice);
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// Two native save slots realize one bracket, both below the engine transform's own slot. The
+    /// outer slot holds the viewport clip, resolved through the pass's device offset and then left
+    /// behind — a clip is stored in device space, so restoring the matrix afterwards keeps the
+    /// engine transform composing from the same baseline it always did. The inner slot is a
+    /// <c>SaveLayer</c> whose paint carries the bracket's opacity and blend, which is what makes
+    /// them apply to the layer as a group when it closes rather than to each primitive inside it;
+    /// the clear is filled inside that layer, over transparency, exactly as the compositor clears a
+    /// freshly bound layer target. A transparent clear is skipped because source-over with a zero
+    /// alpha source is the identity, not because it is close enough.
+    /// </remarks>
+    public void BeginLayerBracket(in LayerBracket bracket)
+    {
+        EnsureActive();
+        if (stateDepth != 0)
+        {
+            throw new InvalidOperationException(
+                $"Cannot open a layer bracket while {stateDepth} unbalanced context state push(es) remain ({DescribeStack()}); author state must be balanced within Render.");
+        }
+
+        // Lowered before the canvas moves, so an undefined blend cannot leave a half-open bracket.
+        var blendMode = ToSkiaBlendMode(bracket.Blend);
+        try
+        {
+            if (canvas.SaveCount > engineSlotBaseline)
+            {
+                canvas.RestoreToCount(engineSlotBaseline);
+            }
+
+            canvas.Save();
+            if (bracket.Viewport is { } viewport)
+            {
+                var baselineMatrix = canvas.TotalMatrix;
+                canvas.Concat(ToSkiaMatrix(deviceOffset));
+                canvas.ClipRect(
+                    SKRect.Create(viewport.X, viewport.Y, viewport.Width, viewport.Height),
+                    SKClipOperation.Intersect,
+                    antialias: false);
+                canvas.SetMatrix(baselineMatrix);
+            }
+
+            StampColor(new UtilsColor(1f, 1f, 1f, bracket.Opacity), blendMode);
+            canvas.SaveLayer(nativePaint);
+            if (bracket.Clear.A > 0f)
+            {
+                StampColor(bracket.Clear, SKBlendMode.SrcOver);
+                canvas.DrawPaint(nativePaint);
+            }
+
+            engineSlotBaseline += SaveSlotsPerBracket;
+            engineBracketDepth++;
+        }
+        catch
+        {
+            // Back to where a clean open would have started: the bracket's slots are gone and so is
+            // the engine transform the open shed, which the caller reinstalls either way.
+            if (canvas.SaveCount > engineSlotBaseline)
+            {
+                canvas.RestoreToCount(engineSlotBaseline);
+            }
+
+            throw;
+        }
+    }
+
+    /// <inheritdoc />
+    public void EndLayerBracket()
+    {
+        EnsureActive();
+        if (engineBracketDepth == 0)
+        {
+            throw new InvalidOperationException(
+                "Cannot end a layer bracket because no engine layer bracket is open.");
+        }
+        if (stateDepth != 0)
+        {
+            throw new InvalidOperationException(
+                $"Cannot end a layer bracket while {stateDepth} unbalanced context state push(es) remain ({DescribeStack()}); author state must be balanced within Render.");
+        }
+
+        // Restoring past the bracket's own two slots also sheds whatever engine transform slot the
+        // walk left installed inside it, which is the one thing above them.
+        var bracketBaseline = engineSlotBaseline - SaveSlotsPerBracket;
+        canvas.RestoreToCount(bracketBaseline);
+        engineSlotBaseline = bracketBaseline;
+        engineBracketDepth--;
     }
 
     /// <inheritdoc />
@@ -368,12 +468,33 @@ public sealed class SkiaDrawContext2D : IDrawContext2D
         }
 
         var unbalancedStateCount = stateDepth;
+        var unbalancedBracketCount = engineBracketDepth;
         ResetToBaseline();
-        if (unbalancedStateCount != 0)
+        if (unbalancedStateCount != 0 || unbalancedBracketCount != 0)
         {
             throw new InvalidOperationException(
-                $"The render pass ended with {unbalancedStateCount} unbalanced context state push(es); baseline state was restored.");
+                $"The render pass ended with {DescribeImbalance(unbalancedStateCount, unbalancedBracketCount)}; baseline state was restored.");
         }
+    }
+
+    /// <summary>
+    /// Names what a pass ended holding. Author pushes and engine brackets are counted separately
+    /// because they are owned by different callers and a fix for one is not a fix for the other.
+    /// </summary>
+    private static string DescribeImbalance(int stateCount, int bracketCount)
+    {
+        var states = stateCount != 0
+            ? $"{stateCount} unbalanced context state push(es)"
+            : null;
+        var brackets = bracketCount != 0
+            ? $"{bracketCount} unbalanced engine layer bracket(s)"
+            : null;
+        if (states is null)
+        {
+            return brackets ?? string.Empty;
+        }
+
+        return brackets is null ? states : $"{states} and {brackets}";
     }
 
     /// <summary>
@@ -609,17 +730,24 @@ public sealed class SkiaDrawContext2D : IDrawContext2D
     /// below every author push. The caller guarantees the author stack is empty.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// The pass's device offset composes below the engine transform — row vectors, so a point is
     /// mapped to frame device pixels first and shifted onto this surface second. The offset is
     /// identity for a surface that is the frame, and composing with the identity is exact, so a
     /// full-frame pass installs precisely the matrix it was handed.
+    /// </para>
+    /// <para>
+    /// The slot the transform lives in sits directly above the innermost open engine layer bracket,
+    /// not above the surface baseline, so installing a per-node transform inside a per-layer group
+    /// replaces only itself and leaves the group's clip and layer standing.
+    /// </para>
     /// </remarks>
     private void InstallEngineTransform(in Matrix3x2 engineToDevice)
     {
         var nativeTransform = ToSkiaMatrix(engineToDevice * deviceOffset);
-        if (canvas.SaveCount > baseSaveCount)
+        if (canvas.SaveCount > engineSlotBaseline)
         {
-            canvas.RestoreToCount(baseSaveCount);
+            canvas.RestoreToCount(engineSlotBaseline);
         }
 
         canvas.Save();
@@ -637,6 +765,8 @@ public sealed class SkiaDrawContext2D : IDrawContext2D
             Array.Clear(stateStack, 0, stateDepth);
             stateDepth = 0;
         }
+        engineBracketDepth = 0;
+        engineSlotBaseline = baseSaveCount;
         passActive = false;
     }
 
