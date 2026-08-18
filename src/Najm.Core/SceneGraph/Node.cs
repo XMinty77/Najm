@@ -1,3 +1,5 @@
+using Najm.Utils;
+
 namespace Najm.Core;
 
 /// <summary>Provides identity, parenting, and insertion-ordered children for a scene-graph node.</summary>
@@ -79,6 +81,81 @@ public abstract class Node
         return sink is not null
             ? sink.RequestRemove(this, child)
             : RemoveImmediate(child);
+    }
+
+    /// <summary>Starts a node-lifetime coroutine and returns its handle.</summary>
+    /// <param name="routine">
+    /// The routine body. It is driven by the scene's coroutine pass, which runs once per tick inside
+    /// Update after the whole tree has updated.
+    /// </param>
+    /// <remarks>
+    /// <para>
+    /// Node lifetime means the routine is cancelled when this node detaches from its scene, during
+    /// the deferred flush that performs the detach, which disposes its enumerator and runs any
+    /// <c>finally</c> the author wrote. It is also suspended — exactly <see cref="CoroutineHandle.Pause"/>
+    /// semantics — while <see cref="Enabled"/> is false on this node or on any ancestor, and resumes
+    /// in place when that stops being true.
+    /// </para>
+    /// <para>
+    /// A node schedules through its scene, so it must already be attached to a loaded one;
+    /// <see cref="OnAttach"/> is the natural place to start a routine that should live as long as the
+    /// node does.
+    /// </para>
+    /// </remarks>
+    /// <exception cref="ArgumentNullException"><paramref name="routine"/> is null.</exception>
+    /// <exception cref="InvalidOperationException">
+    /// This node is not attached to a scene that can schedule.
+    /// </exception>
+    public CoroutineHandle Start(IEnumerator<Wait> routine)
+    {
+        ArgumentNullException.ThrowIfNull(routine);
+        return RequireScheduler(nameof(Start)).Start(routine, this);
+    }
+
+    /// <summary>Starts a node-lifetime tween over a float property and returns its handle.</summary>
+    /// <param name="setter">Receives the from-value now and every value the ramp produces after.</param>
+    /// <param name="from">The value written synchronously, at this call site.</param>
+    /// <param name="to">The exact value written when the tween completes.</param>
+    /// <param name="duration">Finite, non-negative simulation seconds the ramp takes.</param>
+    /// <param name="ease">The easing curve. The default is <see cref="Ease.Linear"/>.</param>
+    /// <remarks>
+    /// The from-value is applied immediately; the first delta is consumed at the next tween pass.
+    /// Detaching this node cancels the tween, which stops it at its current value rather than
+    /// snapping it to either end, and disabling this node or an ancestor freezes its tween time until
+    /// the subtree is enabled again.
+    /// </remarks>
+    /// <exception cref="ArgumentNullException"><paramref name="setter"/> is null.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// An endpoint is not finite, or the duration is not finite and non-negative.
+    /// </exception>
+    /// <exception cref="InvalidOperationException">
+    /// This node is not attached to a scene that can schedule.
+    /// </exception>
+    public AnimationHandle Animate(
+        Action<float> setter,
+        float from,
+        float to,
+        double duration,
+        TimingFunction ease = default) =>
+        RequireScheduler(nameof(Animate)).Animate(setter, from, to, duration, ease, custom: null, owner: this);
+
+    /// <inheritdoc cref="Animate(Action{float}, float, float, double, TimingFunction)" />
+    /// <param name="setter">Receives the from-value now and every value the ramp produces after.</param>
+    /// <param name="from">The value written synchronously, at this call site.</param>
+    /// <param name="to">The exact value written when the tween completes.</param>
+    /// <param name="duration">Finite, non-negative simulation seconds the ramp takes.</param>
+    /// <param name="ease">A custom easing curve.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="setter"/> or <paramref name="ease"/> is null.</exception>
+    public AnimationHandle Animate(
+        Action<float> setter,
+        float from,
+        float to,
+        double duration,
+        ITimingFunction ease)
+    {
+        ArgumentNullException.ThrowIfNull(ease);
+        return RequireScheduler(nameof(Animate))
+            .Animate(setter, from, to, duration, default, ease, owner: this);
     }
 
     internal int ChildCount => children?.Count ?? 0;
@@ -257,6 +334,14 @@ public abstract class Node
 
     internal virtual void OnParentChanged(Node? previousParent, Node? currentParent)
     {
+    }
+
+    /// <summary>Resolves the scheduler this node schedules through: its layer's scene's.</summary>
+    private Scheduler RequireScheduler(string operation)
+    {
+        var scene = layer?.AttachedScene ?? throw new InvalidOperationException(
+            $"Node.{operation} requires a node attached to a loaded scene.");
+        return scene.RequireScheduler($"Node.{operation}");
     }
 
     private void EnsurePaintOrder()

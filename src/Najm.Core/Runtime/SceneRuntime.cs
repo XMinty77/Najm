@@ -7,6 +7,7 @@ internal sealed class SceneRuntime : INodeMutationSink
 {
     private readonly Scene scene;
     private readonly LayerStack layers;
+    private readonly Scheduler scheduler;
     private readonly List<Mutation> mutations = [];
     private readonly Dictionary<Node, Node?> projectedParents = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<Behavior, Node?> projectedBehaviorOwners = new(ReferenceEqualityComparer.Instance);
@@ -19,10 +20,11 @@ internal sealed class SceneRuntime : INodeMutationSink
     private bool isFlushing;
     private bool isUpdating;
 
-    internal SceneRuntime(Scene scene, LayerStack layers)
+    internal SceneRuntime(Scene scene, LayerStack layers, Scheduler scheduler)
     {
         this.scene = scene;
         this.layers = layers;
+        this.scheduler = scheduler;
     }
 
     internal NodeRegistry Registry { get; } = new();
@@ -179,6 +181,7 @@ internal sealed class SceneRuntime : INodeMutationSink
         isUpdating = true;
         try
         {
+            scene.InvokeUpdate(tick);
             for (var layerIndex = 0; layerIndex < layers.Count; layerIndex++)
             {
                 var layer = layers[layerIndex];
@@ -190,6 +193,14 @@ internal sealed class SceneRuntime : INodeMutationSink
                 layer.InvokeUpdate(tick);
                 UpdateNode(layer.RuntimeRoot, tick);
             }
+
+            // Order is normative. Tweens advance first so an animation that ends this frame is
+            // already terminal when the coroutine pass evaluates the waiters joined to it, which is
+            // what makes chained animations gap-free. Both passes run after the whole tree has
+            // updated, so a resumed routine reads this frame's settled state, and before the flush
+            // below, so anything either pass queues structurally lands at the end of Update.
+            scheduler.RunTweenPass(tick);
+            scheduler.RunCoroutinePass(tick);
         }
         catch
         {
@@ -653,6 +664,12 @@ internal sealed class SceneRuntime : INodeMutationSink
 
     private void CleanupSubtreeAttachment(Node root, List<Exception> failures)
     {
+        // Detach cancels what the subtree owns: routines are cancelled synchronously here, so their
+        // enumerators are disposed and author `finally` cleanup runs inside this flush, and tweens
+        // stop at their current value. Parent links are still intact at this point, which is what
+        // lets ownership be decided by walking ancestors.
+        scheduler.CancelOwnedBySubtree(root, failures);
+
         try
         {
             Registry.UnregisterSubtree(root);

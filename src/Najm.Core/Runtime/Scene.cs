@@ -1,5 +1,6 @@
 using System.Numerics;
 using System.Runtime.ExceptionServices;
+using Najm.Utils;
 
 namespace Najm.Core;
 
@@ -15,6 +16,7 @@ public class Scene
     private static readonly Vector2 DefaultVirtualResolution = new(1920f, 1080f);
 
     private readonly SceneRuntime runtime;
+    private readonly Scheduler scheduler;
     private readonly Vector2 virtualResolution = DefaultVirtualResolution;
     private SceneEnvironment? environment;
     private ICompositor? compositor;
@@ -30,7 +32,8 @@ public class Scene
     public Scene()
     {
         Layers = new LayerStack(this);
-        runtime = new SceneRuntime(this, Layers);
+        scheduler = new Scheduler(this);
+        runtime = new SceneRuntime(this, Layers, scheduler);
     }
 
     /// <summary>Gets this scene's controlled, add-ordered layer stack.</summary>
@@ -220,6 +223,76 @@ public class Scene
         }
     }
 
+    /// <summary>Starts a scene-lifetime coroutine and returns its handle.</summary>
+    /// <param name="routine">
+    /// The routine body. It is driven by the coroutine pass, which runs once per tick inside Update
+    /// after the whole tree has updated, so a resumed routine observes this frame's settled state.
+    /// </param>
+    /// <remarks>
+    /// <para>
+    /// Scene lifetime means the routine is cancelled when the scene stops, which disposes its
+    /// enumerator and runs any <c>finally</c> the author wrote. For a routine that should die with a
+    /// node instead, use <see cref="Node.Start(IEnumerator{Wait})"/>.
+    /// </para>
+    /// <para>
+    /// The routine is queued, not resumed: one started before this frame's pass — in
+    /// <see cref="OnLoad"/>, <see cref="OnStart"/>, a tree update, or an input handler — takes its
+    /// first resume in that pass; one started during the pass is appended and resumed later in the
+    /// same pass. Starting from a render is a contract violation, asserted in debug builds.
+    /// </para>
+    /// </remarks>
+    /// <exception cref="ArgumentNullException"><paramref name="routine"/> is null.</exception>
+    /// <exception cref="InvalidOperationException">The scene is not in a schedulable state.</exception>
+    public CoroutineHandle Start(IEnumerator<Wait> routine)
+    {
+        ArgumentNullException.ThrowIfNull(routine);
+        return RequireScheduler(nameof(Start)).Start(routine, owner: null);
+    }
+
+    /// <summary>Starts a scene-lifetime tween over a float property and returns its handle.</summary>
+    /// <param name="setter">Receives the from-value now and every value the ramp produces after.</param>
+    /// <param name="from">The value written synchronously, at this call site.</param>
+    /// <param name="to">The exact value written when the tween completes.</param>
+    /// <param name="duration">Finite, non-negative simulation seconds the ramp takes.</param>
+    /// <param name="ease">The easing curve. The default is <see cref="Ease.Linear"/>.</param>
+    /// <remarks>
+    /// The from-value is applied immediately so the property never shows a frame of its old value;
+    /// the first delta is consumed at the next tween pass. Tween time is simulation time — there is
+    /// no wall-clock path — and the pass runs immediately before the coroutine pass, so
+    /// <c>yield return Wait.For(handle)</c> resumes in the same frame the tween ends.
+    /// </remarks>
+    /// <exception cref="ArgumentNullException"><paramref name="setter"/> is null.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// An endpoint is not finite, or the duration is not finite and non-negative.
+    /// </exception>
+    /// <exception cref="InvalidOperationException">The scene is not in a schedulable state.</exception>
+    public AnimationHandle Animate(
+        Action<float> setter,
+        float from,
+        float to,
+        double duration,
+        TimingFunction ease = default) =>
+        RequireScheduler(nameof(Animate)).Animate(setter, from, to, duration, ease, custom: null, owner: null);
+
+    /// <inheritdoc cref="Animate(Action{float}, float, float, double, TimingFunction)" />
+    /// <param name="setter">Receives the from-value now and every value the ramp produces after.</param>
+    /// <param name="from">The value written synchronously, at this call site.</param>
+    /// <param name="to">The exact value written when the tween completes.</param>
+    /// <param name="duration">Finite, non-negative simulation seconds the ramp takes.</param>
+    /// <param name="ease">A custom easing curve.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="setter"/> or <paramref name="ease"/> is null.</exception>
+    public AnimationHandle Animate(
+        Action<float> setter,
+        float from,
+        float to,
+        double duration,
+        ITimingFunction ease)
+    {
+        ArgumentNullException.ThrowIfNull(ease);
+        return RequireScheduler(nameof(Animate))
+            .Animate(setter, from, to, duration, default, ease, owner: null);
+    }
+
     /// <summary>Runs after the engine has attached the scene's initial layers.</summary>
     protected virtual void OnLoad()
     {
@@ -227,6 +300,26 @@ public class Scene
 
     /// <summary>Runs exactly once immediately before the first successful Update traversal.</summary>
     protected virtual void OnStart()
+    {
+    }
+
+    /// <summary>Updates this scene once per tick, before any layer updates.</summary>
+    /// <param name="tick">This tick's simulation time and input.</param>
+    /// <remarks>
+    /// <para>
+    /// This is the scene-level counterpart of <see cref="Layer.Update"/>, <see cref="Node.Update"/>
+    /// and <see cref="Behavior.Update"/>, and it runs before all three: the Update phase is this
+    /// hook, then the layer traversal, then the tween pass, then the coroutine pass, then the
+    /// deferred flush. Structural edits requested here are deferred to that flush like any other.
+    /// </para>
+    /// <para>
+    /// It is named <c>Update</c> rather than <c>OnUpdate</c> to match the per-tick override on every
+    /// other tier; the <c>On</c> prefix disambiguates hooks from same-named commands, and there is no
+    /// <c>Scene.Update</c> command for it to collide with. This member is a documented deviation from
+    /// the reference, which gives <see cref="Scene"/> no per-tick hook at all.
+    /// </para>
+    /// </remarks>
+    protected virtual void Update(in TickContext tick)
     {
     }
 
@@ -241,6 +334,25 @@ public class Scene
     }
 
     internal SceneState State => state;
+
+    internal bool IsRendering => isRendering;
+
+    internal void InvokeUpdate(in TickContext tick) => Update(tick);
+
+    /// <summary>Returns the scheduler, refusing the call from a state that cannot schedule.</summary>
+    internal Scheduler RequireScheduler(string operation)
+    {
+        if (state is not (
+            SceneState.Loading or
+            SceneState.Loaded or
+            SceneState.Starting or
+            SceneState.Started))
+        {
+            throw InvalidTransition(operation, state);
+        }
+
+        return scheduler;
+    }
 
     internal NodeRegistry Registry => runtime.Registry;
 
@@ -299,7 +411,7 @@ public class Scene
         }
 
         stopAttempted = true;
-        Exception? failure = null;
+        var failures = new List<Exception>();
         state = SceneState.Stopping;
         try
         {
@@ -310,18 +422,18 @@ public class Scene
         }
         catch (Exception exception)
         {
-            failure = exception;
+            failures.Add(exception);
         }
         finally
         {
+            // Scene-lifetime routines and tweens end here, and they end even when the author's stop
+            // hook threw: an enumerator that never gets disposed is a `finally` that never runs.
+            scheduler.CancelAll(failures);
             runtime.AbandonMutations();
-            state = failure is null ? SceneState.Stopped : SceneState.Faulted;
+            state = failures.Count == 0 ? SceneState.Stopped : SceneState.Faulted;
         }
 
-        if (failure is not null)
-        {
-            ExceptionDispatchInfo.Capture(failure).Throw();
-        }
+        ThrowFailures(failures);
     }
 
     internal void Unload()
@@ -363,6 +475,9 @@ public class Scene
         }
         finally
         {
+            // A scene that loaded but never started never ran Stop, so anything OnLoad scheduled is
+            // still live and still holding an undisposed enumerator.
+            scheduler.CancelAll(failures);
             failures.AddRange(runtime.DetachAllLayers());
             var disposal = ReleaseComposition();
             if (disposal is not null)
