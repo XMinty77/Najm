@@ -21,8 +21,10 @@ namespace Najm.Core;
 /// <see cref="Node.Render(IDrawContext2D)"/> runs, so the traverser never brackets the walk in
 /// author state — an outstanding push would make the next engine transform illegal. Where the walk
 /// does need a bracket, it uses the engine's own:
-/// <see cref="IDrawContext2D.BeginLayerBracket(in LayerBracket)"/>, whose depth is tracked apart
-/// from author state precisely so a per-node transform can be installed inside it.
+/// <see cref="IDrawContext2D.BeginLayerBracket(in LayerBracket)"/> around a layer and
+/// <see cref="IDrawContext2D.BeginUnitBracket(in UnitBracket)"/> around an isolating node's
+/// subtree, whose depths are tracked apart from author state precisely so a per-node transform can
+/// be installed inside them.
 /// </para>
 /// <para>
 /// Traversal reads the tree and writes only to the context: it never mutates observable scene
@@ -52,8 +54,10 @@ public static class RenderTraverser
     /// whole: no bracket, no clear, no walk, no hooks.
     /// </para>
     /// <para>
-    /// Node-tier isolation brackets, the ones a non-default blend or a backdrop read inside a
-    /// subtree would demand, are not opened and are not approximated.
+    /// Node-tier isolation happens inside the walk, one bracket per isolating node — see
+    /// <see cref="Node2D.RequiresIsolation"/> — and nests inside the layer bracket. The M2 terms of
+    /// §6.7's predicate, a mask, an effect, or a backdrop read, are not implemented and are not
+    /// approximated.
     /// </para>
     /// </remarks>
     /// <exception cref="ArgumentNullException">
@@ -250,8 +254,24 @@ public static class RenderTraverser
 
     /// <summary>
     /// Walks one node and its subtree depth-first in paint order, installing each node's engine
-    /// transform before its own paint and before its children's.
+    /// transform before its own paint and before its children's, and bracketing the subtree as one
+    /// compositing unit where §6.7's isolation predicate demands it.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The bracket opens <em>before</em> the node's own engine transform is installed and closes
+    /// after the last descendant, so the unit spans exactly the node's emitted content plus its
+    /// subtree — §6.7's compositing unit, no more and no less. Opening it discards the engine
+    /// transform the previous sibling left installed, which is why the transform is set after the
+    /// bracket rather than before it.
+    /// </para>
+    /// <para>
+    /// The overwhelmingly common node isolates nothing. <see cref="Node2D.RequiresIsolation"/> is a
+    /// field test, <see cref="UnitBracket"/> is a struct passed by reference, and a node at default
+    /// opacity and default blend therefore reaches its paint through exactly the calls it reached
+    /// them through before this existed.
+    /// </para>
+    /// </remarks>
     private static void RenderNode(Node node, IDrawContext2D context, in Matrix3x2 layerBase)
     {
         if (!node.Visible)
@@ -261,15 +281,32 @@ public static class RenderTraverser
 
         // Row vectors: the node's world matrix must reach the point before the layer base does,
         // so the node's matrix is the left operand.
-        var engineToDevice = node is Node2D spatial
+        var spatial = node as Node2D;
+        var engineToDevice = spatial is not null
             ? spatial.WorldMatrix * layerBase
             : layerBase;
+
+        var isolates = spatial is not null && spatial.RequiresIsolation;
+        if (isolates)
+        {
+            context.BeginUnitBracket(new UnitBracket(spatial!.Opacity, spatial.Blend));
+        }
+
         context.SetEngineTransform(engineToDevice);
         node.InvokeRender(context);
 
         for (var childIndex = 0; childIndex < node.ChildCount; childIndex++)
         {
             RenderNode(node.GetChildInPaintOrder(childIndex), context, layerBase);
+        }
+
+        // Not in a finally, for the reason RenderLayers does not close its layer bracket in one:
+        // a walk that threw has already lost the frame, and closing here would replace the author's
+        // exception with whatever the half-drawn unit produced. The context reports the unbalanced
+        // bracket when the pass ends.
+        if (isolates)
+        {
+            context.EndUnitBracket();
         }
     }
 

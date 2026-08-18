@@ -7,6 +7,8 @@ namespace Najm.Core;
 public class Node2D : Node
 {
     private int zIndex;
+    private float opacity = 1f;
+    private BlendMode blend = BlendMode.SrcOver;
 
     internal override NodeSpaceKind SpaceKind => NodeSpaceKind.TwoD;
 
@@ -125,6 +127,100 @@ public class Node2D : Node
     /// node whose paint reaches outside its geometry must widen this rectangle to match.
     /// </remarks>
     public virtual Rect VisualBounds => GeometryBounds;
+
+    /// <summary>
+    /// Gets or sets the group alpha of this node's compositing unit — itself and its whole subtree
+    /// — from zero to one inclusive. The default is one.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is <em>group</em> opacity, not a per-primitive alpha multiply. The node and everything
+    /// beneath it composite once, and the result of that composite is attenuated. Two overlapping
+    /// children under a parent at <c>0.5</c> therefore show the half-alpha composite of their union;
+    /// halving each child independently would darken the overlap instead, and the two readings
+    /// differ visibly wherever content overlaps.
+    /// </para>
+    /// <para>
+    /// A value below one makes the unit isolate, which costs an offscreen group for the subtree —
+    /// see §1.4's warning that composition brackets are fill-rate cost. The default of one is free:
+    /// no bracket is opened and nothing is allocated.
+    /// </para>
+    /// </remarks>
+    /// <exception cref="ArgumentOutOfRangeException">The value is not finite and within zero to one.</exception>
+    public float Opacity
+    {
+        get => opacity;
+        set
+        {
+            if (!float.IsFinite(value) || value < 0f || value > 1f)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(value),
+                    value,
+                    "Node opacity must be finite and between zero and one inclusive.");
+            }
+
+            opacity = value;
+        }
+    }
+
+    /// <summary>
+    /// Gets or sets the blend this node's compositing unit uses against its current isolation
+    /// scope. The default is <see cref="BlendMode.SrcOver"/>.
+    /// </summary>
+    /// <remarks>
+    /// The unit blends against the scope that encloses it — the innermost isolating ancestor, or
+    /// failing that the node's own layer — never against the assembled frame. A non-default value
+    /// makes the unit isolate.
+    /// </remarks>
+    /// <exception cref="ArgumentException">The value is not a defined blend mode.</exception>
+    public BlendMode Blend
+    {
+        get => blend;
+        set
+        {
+            if (!Enum.IsDefined(value))
+            {
+                throw new ArgumentException("The blend mode is not defined.", nameof(value));
+            }
+
+            blend = value;
+        }
+    }
+
+    /// <summary>
+    /// Gets or sets whether this node forces an explicit compositing scope even when nothing else
+    /// requires one. The default is <see langword="false"/>.
+    /// </summary>
+    /// <remarks>
+    /// Setting it is how an author makes a subtree a stacking scope on purpose: descendants with a
+    /// non-default <see cref="Blend"/> then composite against this unit rather than against
+    /// whatever lies outside it.
+    /// </remarks>
+    public bool Isolate { get; set; }
+
+    /// <summary>
+    /// Gets whether this node's composition state requires its subtree to be bracketed as one
+    /// isolated unit.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// §6.7's isolation predicate, restricted to the M1 property set: a unit isolates when its
+    /// opacity is below one, its blend is not the default, or <see cref="Isolate"/> is set. The
+    /// full predicate also isolates on a mask, an effect, or a backdrop, and those terms arrive
+    /// with the properties themselves rather than as unreachable code here.
+    /// </para>
+    /// <para>
+    /// This is the render walk's per-node fast path, so it is three field reads and no branching
+    /// into anything that allocates. The overwhelmingly common node — default opacity, default
+    /// blend, no forced isolation — answers <see langword="false"/> and costs the walk nothing
+    /// beyond the test itself. §6.7's <c>CompositionAtomicity.SinglePrimitive</c> exemption, which
+    /// would let a verified single-primitive node fold its opacity into its own paint instead of
+    /// bracketing, is deliberately absent: without the verification it would silently give custom
+    /// drawables per-primitive opacity where they were promised group opacity.
+    /// </para>
+    /// </remarks>
+    internal bool RequiresIsolation => opacity < 1f || blend != BlendMode.SrcOver || Isolate;
 
     internal override int PaintOrderKey => zIndex;
 

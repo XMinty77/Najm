@@ -27,8 +27,11 @@ namespace Najm.Skia;
 /// per frame.
 /// </para>
 /// <para>
-/// M1 scope: ordinary layers only. Backdrop-reading layers, masks, node-tier isolation brackets,
-/// layer effects, and surface pooling are not implemented and are not silently approximated.
+/// M1 scope: ordinary layers only. Backdrop-reading layers, masks, layer effects, and surface
+/// pooling are not implemented and are not silently approximated. Node-tier isolation is not this
+/// type's business at all: the shared <see cref="RenderTraverser"/> opens a unit bracket per
+/// isolating node while it walks, so a composited frame gets the same units a direct frame does
+/// without this type knowing they exist.
 /// </para>
 /// </remarks>
 public sealed class SkiaCompositor : ICompositor

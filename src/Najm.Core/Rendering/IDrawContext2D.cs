@@ -75,8 +75,8 @@ public interface IDrawContext2D
     /// The author state stack is not empty. Authors must balance their pushes within a single
     /// <c>Render</c> call, so an outstanding push means the engine transform would be installed
     /// under state it does not own. The stack is not changed when this exception is thrown. An open
-    /// engine layer bracket is <em>not</em> an obstacle: the engine owns that bracket, installs the
-    /// transform inside it, and closing the bracket unwinds both.
+    /// engine bracket — layer or unit — is <em>not</em> an obstacle: the engine owns those
+    /// brackets, installs the transform inside them, and closing one unwinds both.
     /// </exception>
     void SetEngineTransform(in Matrix3x2 engineToDevice);
 
@@ -109,9 +109,10 @@ public interface IDrawContext2D
     /// unbalanced bracket is reported when the pass ends, as an unbalanced author push is.
     /// </para>
     /// <para>
-    /// M1 scope: the bracket isolates its layer as a group. Node-tier isolation brackets — the ones
-    /// a non-default blend or a backdrop read inside the subtree would demand — are not implemented
-    /// and are not approximated here.
+    /// M1 scope: the bracket isolates its layer as a group. Node-tier isolation is a bracket of its
+    /// own — <see cref="BeginUnitBracket(in UnitBracket)"/>, which nests inside this one — and the
+    /// M2 parts of §6.7 that would also demand isolation, a mask, an effect, or a backdrop read, are
+    /// not implemented and are not approximated here.
     /// </para>
     /// </remarks>
     /// <exception cref="ArgumentOutOfRangeException">
@@ -131,9 +132,71 @@ public interface IDrawContext2D
     /// installs the one it needs next. Author state is unaffected, because it must be empty here.
     /// </remarks>
     /// <exception cref="InvalidOperationException">
-    /// No pass is active, no engine layer bracket is open, or the author state stack is not empty.
+    /// No pass is active, no engine layer bracket is open, the innermost open engine bracket is a
+    /// unit bracket rather than a layer bracket, or the author state stack is not empty.
     /// </exception>
     void EndLayerBracket();
+
+    /// <summary>
+    /// Backend-facing SPI: opens a group that carries one node's subtree opacity and blend.
+    /// </summary>
+    /// <param name="bracket">The node composition this group applies.</param>
+    /// <remarks>
+    /// <para>
+    /// This member is called by the engine's render traverser, not by authors, and it is the M1
+    /// ancestor of the reference's <c>BeginUnit(in UnitParams)</c>. Closing composites everything
+    /// drawn since as one unit, attenuated by <see cref="UnitBracket.Opacity"/> and combined with
+    /// <see cref="UnitBracket.Blend"/>. Both are group operations applied once to the unit's whole
+    /// contents, which is what makes <see cref="Node2D.Opacity"/> true group opacity rather than a
+    /// per-primitive alpha multiply.
+    /// </para>
+    /// <para>
+    /// <strong>Bracket sizing is conservative in M1.</strong> The group covers the active clip —
+    /// the whole target when nothing narrower is clipped — rather than the node's device-resolved
+    /// <see cref="Node2D.VisualBounds"/>. §6.7's snapped visual-bounds rectangle is the M2 shape and
+    /// arrives with the resolved-bounds machinery it needs; until then this trades fill rate for
+    /// correctness, never the reverse. Every pixel the tight rectangle would have covered is inside
+    /// the conservative one, so the composite is identical and only its cost differs.
+    /// </para>
+    /// <para>
+    /// Node bracket depth is tracked with engine layer bracket depth and apart from author push
+    /// depth, for the same reason: the traverser installs a per-node engine transform inside every
+    /// open unit, so <see cref="SetEngineTransform"/> must tolerate one while still refusing
+    /// outstanding author pushes. The bracket owns no engine transform of its own — opening one
+    /// discards whatever was installed, and the caller installs what it needs next.
+    /// </para>
+    /// <para>
+    /// Unit and layer brackets share one last-in-first-out order: a unit opened inside a layer must
+    /// close before that layer does, and <see cref="EndLayerBracket"/> refuses to close across an
+    /// open unit. Every bracket must be closed before the pass ends; an unbalanced one is reported
+    /// when the pass ends, naming its own kind.
+    /// </para>
+    /// <para>
+    /// M1 scope: opacity and blend only. <c>Clip</c>, <c>Mask</c>, <c>Effect</c>, and
+    /// <c>Backdrop</c> are M2; no part of them is approximated here.
+    /// </para>
+    /// </remarks>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// <see cref="UnitBracket.Blend"/> is not a blend mode the backend can lower.
+    /// </exception>
+    /// <exception cref="InvalidOperationException">
+    /// No pass is active, or the author state stack is not empty.
+    /// </exception>
+    void BeginUnitBracket(in UnitBracket bracket);
+
+    /// <summary>
+    /// Backend-facing SPI: closes the most recently opened engine unit bracket, compositing its
+    /// contents with the opacity and blend the bracket was opened with.
+    /// </summary>
+    /// <remarks>
+    /// The engine transform installed inside the unit does not survive the close; the caller
+    /// installs the one it needs next. Author state is unaffected, because it must be empty here.
+    /// </remarks>
+    /// <exception cref="InvalidOperationException">
+    /// No pass is active, no engine unit bracket is open, the innermost open engine bracket is a
+    /// layer bracket rather than a unit bracket, or the author state stack is not empty.
+    /// </exception>
+    void EndUnitBracket();
 
     /// <summary>Saves state and composes a finite local transform below the engine transform.</summary>
     void PushTransform(in Matrix3x2 localTransform);

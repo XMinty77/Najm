@@ -409,6 +409,109 @@ public sealed class RenderTraverserTests
     }
 
     [TestMethod]
+    public void OnlyANodeWhoseCompositionRequiresIsolationOpensAUnitBracket()
+    {
+        // §6.7's predicate, restricted to M1's three properties. The default node is the case that
+        // has to stay free: no bracket, no offscreen group, nothing to pay for.
+        var scene = new Scene();
+        var layer = scene.Layers.Add(new ScreenLayer());
+        var plain = layer.Root.Add(new Node2D());
+        var faded = layer.Root.Add(new Node2D { Opacity = 0.5f });
+        var blended = layer.Root.Add(new Node2D { Blend = BlendMode.Multiply });
+        var forced = layer.Root.Add(new Node2D { Isolate = true });
+        scene.Load(TestEnvironment.Stub());
+
+        var context = new RecordingContext();
+        scene.RenderDirect(context);
+
+        // Three isolating nodes among four, plus the layer's own root, which is a plain Node2D.
+        Assert.HasCount(3, context.Units);
+        Assert.AreEqual(new UnitBracket(0.5f, BlendMode.SrcOver), context.Units[0]);
+        Assert.AreEqual(new UnitBracket(1f, BlendMode.Multiply), context.Units[1]);
+        Assert.AreEqual(new UnitBracket(1f, BlendMode.SrcOver), context.Units[2]);
+        Assert.AreEqual(0, context.UnitDepth, "Every unit the walk opened must have closed.");
+
+        // Restoring each property to its default takes the node back off the isolating path, so the
+        // predicate is read per frame rather than latched when the property was first set.
+        faded.Opacity = 1f;
+        blended.Blend = BlendMode.SrcOver;
+        forced.Isolate = false;
+        var quiet = new RecordingContext();
+        scene.RenderDirect(quiet);
+
+        Assert.AreEqual(0, quiet.UnitCount, "Four default nodes must open nothing at all.");
+        Assert.IsFalse(plain.Isolate);
+    }
+
+    [TestMethod]
+    public void AUnitBracketEnclosesTheNodesOwnPaintAndItsWholeSubtree()
+    {
+        // The unit is the node plus its descendants, which is what makes the opacity a group
+        // operation. It opens before the node's own engine transform — opening sheds whatever
+        // transform the previous sibling installed — and closes after the last descendant.
+        var scene = new Scene();
+        var log = new RenderLog();
+        var layer = scene.Layers.Add(new ScreenLayer());
+        var group = layer.Root.Add(new LoggingDrawable("group", log));
+        group.Opacity = 0.5f;
+        group.Add(new LoggingDrawable("child", log));
+        layer.Root.Add(new LoggingDrawable("sibling", log));
+        scene.Load(TestEnvironment.Stub());
+
+        var context = new RecordingContext();
+        scene.RenderDirect(context);
+
+        Assert.AreEqual(
+            "open1,engine,engine,unit+1,engine,group,engine,child,unit-1,engine,sibling,engine,close1",
+            context.Events);
+    }
+
+    [TestMethod]
+    public void NestedIsolatingNodesNestTheirUnitsAndAnInvisibleOneOpensNothing()
+    {
+        var scene = new Scene();
+        var log = new RenderLog();
+        var layer = scene.Layers.Add(new ScreenLayer());
+        var outer = layer.Root.Add(new LoggingDrawable("outer", log));
+        outer.Opacity = 0.5f;
+        var inner = outer.Add(new LoggingDrawable("inner", log));
+        inner.Blend = BlendMode.Screen;
+        scene.Load(TestEnvironment.Stub());
+
+        var context = new RecordingContext();
+        scene.RenderDirect(context);
+
+        Assert.AreEqual(
+            "open1,engine,engine,unit+1,engine,outer,unit+2,engine,inner,unit-2,unit-1,engine,close1",
+            context.Events);
+
+        // Visibility is decided before isolation, so a hidden unit costs no bracket either: an
+        // invisible subtree that still opened its group would be a pure fill-rate leak.
+        outer.Visible = false;
+        var hidden = new RecordingContext();
+        scene.RenderDirect(hidden);
+
+        Assert.AreEqual(0, hidden.UnitCount);
+    }
+
+    [TestMethod]
+    public void AUnitBracketRejectsAnOpacityOutsideTheUnitInterval()
+    {
+        foreach (var invalid in new[] { -0.001f, 1.001f, float.NaN, float.NegativeInfinity })
+        {
+            var rejected = Assert.ThrowsExactly<ArgumentOutOfRangeException>(
+                () => _ = new UnitBracket(invalid, BlendMode.SrcOver));
+            Assert.AreEqual("opacity", rejected.ParamName);
+        }
+
+        var bracket = new UnitBracket(0.25f, BlendMode.Screen);
+
+        Assert.AreEqual(0.25f, bracket.Opacity);
+        Assert.AreEqual(BlendMode.Screen, bracket.Blend);
+        Assert.AreEqual(default, new UnitBracket(0f, BlendMode.SrcOver));
+    }
+
+    [TestMethod]
     public void WarmRenderTraversalAllocatesNoManagedMemory()
     {
         var scene = new Scene();
@@ -437,6 +540,38 @@ public sealed class RenderTraverserTests
         Assert.AreEqual((64 + reading.Invocations) * 4, context.DrawCount);
         Assert.AreEqual((64 + reading.Invocations) * 2, context.BracketCount);
         Assert.AreEqual(0, context.BracketDepth);
+    }
+
+    [TestMethod]
+    public void AWarmWalkOverIsolatingNodesAllocatesNoManagedMemory()
+    {
+        // The bracket is a struct passed by reference and the predicate is three field reads, so
+        // isolation costs the managed heap nothing per frame however many nodes take it.
+        var scene = new Scene();
+        var screen = scene.Layers.Add(new ScreenLayer());
+        var faded = screen.Root.Add(new SilentDrawable());
+        faded.Opacity = 0.5f;
+        var blended = faded.Add(new SilentDrawable());
+        blended.Blend = BlendMode.Multiply;
+        var forced = screen.Root.Add(new SilentDrawable());
+        forced.Isolate = true;
+        scene.Load(TestEnvironment.Stub());
+        scene.Tick(Ticks.At(0));
+
+        var context = new SilentContext();
+        for (var warmup = 0; warmup < 64; warmup++)
+        {
+            scene.RenderDirect(context);
+        }
+
+        var reading = AllocationProbe.AssertNoneAllocated(
+            10_000,
+            () => scene.RenderDirect(context),
+            "The warm render traversal over isolating nodes");
+
+        // Three isolating nodes, every render. The probe owns the render count.
+        Assert.AreEqual((64 + reading.Invocations) * 3, context.UnitCount);
+        Assert.AreEqual(0, context.UnitDepth);
     }
 
     private static void AssertPoint(Vector2 expected, Vector2 actual)
@@ -534,6 +669,12 @@ public sealed class RenderTraverserTests
         /// <summary>Gets how many engine layer brackets have been opened in total.</summary>
         internal int BracketCount { get; private set; }
 
+        /// <summary>Gets how many engine unit brackets are open right now.</summary>
+        internal int UnitDepth { get; private set; }
+
+        /// <summary>Gets how many engine unit brackets have been opened in total.</summary>
+        internal int UnitCount { get; private set; }
+
         public void Clear(Color color)
         {
         }
@@ -562,6 +703,22 @@ public sealed class RenderTraverserTests
             }
 
             BracketDepth--;
+        }
+
+        public virtual void BeginUnitBracket(in UnitBracket bracket)
+        {
+            UnitDepth++;
+            UnitCount++;
+        }
+
+        public virtual void EndUnitBracket()
+        {
+            if (UnitDepth == 0)
+            {
+                throw new InvalidOperationException("No engine unit bracket is open.");
+            }
+
+            UnitDepth--;
         }
 
         public void PushTransform(in Matrix3x2 localTransform)
@@ -596,12 +753,16 @@ public sealed class RenderTraverserTests
     private sealed class RecordingContext(float renderScale = 1f) : SilentContext(renderScale)
     {
         private readonly List<LayerBracket> brackets = [];
+        private readonly List<UnitBracket> units = [];
         private readonly List<string> events = [];
 
         internal Matrix3x2 Engine { get; private set; }
 
         /// <summary>Gets every bracket opened, in the order the traverser opened them.</summary>
         internal IReadOnlyList<LayerBracket> Brackets => brackets;
+
+        /// <summary>Gets every unit bracket opened, in the order the traverser opened them.</summary>
+        internal IReadOnlyList<UnitBracket> Units => units;
 
         /// <summary>Gets the interleaving of brackets, engine transforms, hooks, and node paints.</summary>
         internal string Events => string.Join(',', events);
@@ -625,6 +786,19 @@ public sealed class RenderTraverserTests
         {
             events.Add($"close{BracketDepth}");
             base.EndLayerBracket();
+        }
+
+        public override void BeginUnitBracket(in UnitBracket bracket)
+        {
+            base.BeginUnitBracket(bracket);
+            units.Add(bracket);
+            events.Add($"unit+{UnitDepth}");
+        }
+
+        public override void EndUnitBracket()
+        {
+            events.Add($"unit-{UnitDepth}");
+            base.EndUnitBracket();
         }
     }
 

@@ -26,21 +26,68 @@ namespace Najm.Skia;
 /// scratch path and paint are backend-owned, rewound or reset, and reused for every draw. Rewinding
 /// the path retains its native storage for allocation-free drawing at a stable command count.
 /// State pushes share one strict typed LIFO stack and are balanced automatically when the owning
-/// target is disposed. Engine layer brackets are counted on their own, apart from that stack: the
-/// engine opens them around whole layers and installs its per-node transforms inside them, which
-/// author state may never do. The native objects Skia forces us to allocate for brushes and dashes live in
+/// target is disposed. Engine brackets — layer brackets around a whole layer, unit brackets around
+/// one isolating node's subtree — share a second typed LIFO stack of their own, apart from author
+/// state: the engine installs its per-node transforms inside them, which author state may never
+/// allow. The native objects Skia forces us to allocate for brushes and dashes live in
 /// context-owned caches keyed by the portable descriptor <em>value</em>: the first appearance of a
-/// gradient or dash allocates, and every repetition is a dictionary hit that allocates nothing.
+/// gradient or dash allocates, every repetition is a dictionary hit that allocates nothing, and the
+/// caches are bounded so an animated descriptor cannot pin native memory frame after frame.
 /// </remarks>
 public sealed class SkiaDrawContext2D : IDrawContext2D
 {
     private const int InitialStateCapacity = 16;
 
     /// <summary>
-    /// Native save slots one engine layer bracket occupies: the viewport clip and the group layer.
-    /// The count is fixed, so a bracket's baseline is arithmetic rather than a second stack.
+    /// How many distinct brush values, and how many distinct dash values, one context keeps a native
+    /// object for before it starts evicting the least recently used.
     /// </summary>
-    private const int SaveSlotsPerBracket = 2;
+    /// <remarks>
+    /// <para>
+    /// <strong>Why bounded at all.</strong> NAJM-SKIA II.2 requires these caches to trim "so an
+    /// abandoned gradient doesn't pin GPU memory forever". There is no surface pool and no epoch in
+    /// this tree to trim against, so the bound does the job instead — and the case that makes it
+    /// urgent is not abandonment but animation. A brush whose stop colours are tweened is a
+    /// <em>different</em> brush value on every frame, so at 60 fps an unbounded dictionary gains
+    /// 3,600 shaders a minute and never releases one; a dash whose phase marches does the same.
+    /// </para>
+    /// <para>
+    /// <strong>Why 64.</strong> The bound has to sit above the number of distinct descriptor values
+    /// drawn in a <em>single</em> frame, because below that every entry is evicted before its next
+    /// use and the cache degrades into construct-per-draw. That number is palette-sized rather than
+    /// node-sized: §1.4 budgets a few hundred to ~3,000 nodes per scene, and nodes share brushes
+    /// rather than each inventing one, so a scene with a dozen distinct gradients is already a busy
+    /// one. 64 leaves roughly a 5× margin over that while staying cheap to hold: a gradient shader
+    /// of a handful of stops is a few hundred bytes of native state, so 64 of them is tens of
+    /// kilobytes per context, against the tens of megabytes one 4K layer target costs. One number
+    /// serves both caches because both hold the same kind of thing for the same reason, and a dash
+    /// interval array is smaller than a gradient ramp, never larger.
+    /// </para>
+    /// <para>
+    /// A scene that genuinely draws more than 64 distinct gradients per frame is not broken by this;
+    /// it pays construction per draw, exactly as it would have on its first frame today. Its fix is
+    /// the batch tier, not a bigger cache.
+    /// </para>
+    /// </remarks>
+    private const int DescriptorCacheCapacity = 64;
+
+    /// <summary>
+    /// Initial depth of the engine bracket stack. Layers nest shallowly and isolating nodes nest
+    /// only as deep as an author stacks composition properties, so this is generous already; the
+    /// stack doubles on overflow exactly as the author state stack does.
+    /// </summary>
+    private const int InitialBracketCapacity = 16;
+
+    /// <summary>
+    /// Native save slots one engine layer bracket occupies: the viewport clip and the group layer.
+    /// </summary>
+    private const int SaveSlotsPerLayerBracket = 2;
+
+    /// <summary>
+    /// Native save slots one engine unit bracket occupies: the group layer alone. A node has no
+    /// viewport to clip and no target of its own to clear, so it needs no second slot.
+    /// </summary>
+    private const int SaveSlotsPerUnitBracket = 1;
 
     private static readonly SKSamplingOptions LinearSampling = new(
         SKFilterMode.Linear,
@@ -54,9 +101,11 @@ public sealed class SkiaDrawContext2D : IDrawContext2D
     private readonly SKPath nativePath = new();
     private readonly SKPaint nativePaint = new();
     private readonly SKColorSpace srgbColorSpace = SKColorSpace.CreateSrgb();
-    private readonly Dictionary<CoreBrush, SKShader> shaderCache = [];
-    private readonly Dictionary<CoreStrokeDash, SKPathEffect> dashCache = [];
+    private readonly DescriptorCache<CoreBrush, SKShader> shaderCache = new(DescriptorCacheCapacity);
+    private readonly DescriptorCache<CoreStrokeDash, SKPathEffect> dashCache =
+        new(DescriptorCacheCapacity);
     private StateKind[] stateStack = new StateKind[InitialStateCapacity];
+    private BracketKind[] bracketStack = new BracketKind[InitialBracketCapacity];
     private Matrix3x2 deviceOffset = Matrix3x2.Identity;
     private RenderCaps caps;
     private float renderScale;
@@ -218,8 +267,10 @@ public sealed class SkiaDrawContext2D : IDrawContext2D
                 $"Cannot open a layer bracket while {stateDepth} unbalanced context state push(es) remain ({DescribeStack()}); author state must be balanced within Render.");
         }
 
-        // Lowered before the canvas moves, so an undefined blend cannot leave a half-open bracket.
+        // Lowered before the canvas moves, so an undefined blend cannot leave a half-open bracket,
+        // and the stack is grown before it too, so a resize cannot fail over an open group.
         var blendMode = ToSkiaBlendMode(bracket.Blend);
+        EnsureBracketCapacity();
         try
         {
             if (canvas.SaveCount > engineSlotBaseline)
@@ -247,8 +298,8 @@ public sealed class SkiaDrawContext2D : IDrawContext2D
                 canvas.DrawPaint(nativePaint);
             }
 
-            engineSlotBaseline += SaveSlotsPerBracket;
-            engineBracketDepth++;
+            engineSlotBaseline += SaveSlotsPerLayerBracket;
+            bracketStack[engineBracketDepth++] = BracketKind.Layer;
         }
         catch
         {
@@ -264,26 +315,102 @@ public sealed class SkiaDrawContext2D : IDrawContext2D
     }
 
     /// <inheritdoc />
-    public void EndLayerBracket()
+    public void EndLayerBracket() => EndBracket(BracketKind.Layer);
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// <para>
+    /// One native save slot realizes a unit, below the engine transform's own slot: a
+    /// <c>SaveLayer</c> whose paint carries the unit's opacity and blend, applied to everything the
+    /// subtree drew when the layer restores. That single restore is what makes
+    /// <see cref="Node2D.Opacity"/> group opacity — the subtree is composited into the layer at full
+    /// alpha and the layer's alpha is applied to the composite, so overlapping siblings are
+    /// attenuated once between them rather than once each.
+    /// </para>
+    /// <para>
+    /// The layer takes no bounds, which is Skia's spelling of the conservative M1 sizing: the group
+    /// covers the current clip. Whatever clip an enclosing layer bracket's viewport installed is
+    /// still in force at the unit's baseline, so a unit inside a viewport'd layer is already bounded
+    /// by that viewport rather than by the whole surface.
+    /// </para>
+    /// </remarks>
+    public void BeginUnitBracket(in UnitBracket bracket)
     {
         EnsureActive();
+        if (stateDepth != 0)
+        {
+            throw new InvalidOperationException(
+                $"Cannot open a unit bracket while {stateDepth} unbalanced context state push(es) remain ({DescribeStack()}); author state must be balanced within Render.");
+        }
+
+        // Lowered before the canvas moves, so an undefined blend cannot leave a half-open bracket,
+        // and the stack is grown before it too, so a resize cannot fail over an open group.
+        var blendMode = ToSkiaBlendMode(bracket.Blend);
+        EnsureBracketCapacity();
+        try
+        {
+            if (canvas.SaveCount > engineSlotBaseline)
+            {
+                canvas.RestoreToCount(engineSlotBaseline);
+            }
+
+            StampColor(new UtilsColor(1f, 1f, 1f, bracket.Opacity), blendMode);
+            canvas.SaveLayer(nativePaint);
+            engineSlotBaseline += SaveSlotsPerUnitBracket;
+            bracketStack[engineBracketDepth++] = BracketKind.Unit;
+        }
+        catch
+        {
+            // Back to where a clean open would have started: the unit's slot is gone and so is the
+            // engine transform the open shed, which the caller reinstalls either way.
+            if (canvas.SaveCount > engineSlotBaseline)
+            {
+                canvas.RestoreToCount(engineSlotBaseline);
+            }
+
+            throw;
+        }
+    }
+
+    /// <inheritdoc />
+    public void EndUnitBracket() => EndBracket(BracketKind.Unit);
+
+    /// <summary>
+    /// Closes the innermost engine bracket, which must be of <paramref name="expected"/> kind.
+    /// </summary>
+    /// <remarks>
+    /// Layer and unit brackets share one last-in-first-out order because they share the canvas save
+    /// stack, so closing them out of order would restore another bracket's slots. The kind check
+    /// turns that into a named error rather than a silently wrong frame.
+    /// </remarks>
+    private void EndBracket(BracketKind expected)
+    {
+        EnsureActive();
+        var name = DescribeBracket(expected);
         if (engineBracketDepth == 0)
         {
             throw new InvalidOperationException(
-                "Cannot end a layer bracket because no engine layer bracket is open.");
+                $"Cannot end a {name} bracket because no engine {name} bracket is open.");
+        }
+
+        var innermost = bracketStack[engineBracketDepth - 1];
+        if (innermost != expected)
+        {
+            throw new InvalidOperationException(
+                $"Cannot end a {name} bracket before the more recently opened engine {DescribeBracket(innermost)} bracket.");
         }
         if (stateDepth != 0)
         {
             throw new InvalidOperationException(
-                $"Cannot end a layer bracket while {stateDepth} unbalanced context state push(es) remain ({DescribeStack()}); author state must be balanced within Render.");
+                $"Cannot end a {name} bracket while {stateDepth} unbalanced context state push(es) remain ({DescribeStack()}); author state must be balanced within Render.");
         }
 
-        // Restoring past the bracket's own two slots also sheds whatever engine transform slot the
-        // walk left installed inside it, which is the one thing above them.
-        var bracketBaseline = engineSlotBaseline - SaveSlotsPerBracket;
+        // Restoring past the bracket's own slots also sheds whatever engine transform slot the walk
+        // left installed inside it, which is the one thing above them.
+        var bracketBaseline = engineSlotBaseline - SaveSlotsFor(expected);
         canvas.RestoreToCount(bracketBaseline);
         engineSlotBaseline = bracketBaseline;
-        engineBracketDepth--;
+        bracketStack[--engineBracketDepth] = BracketKind.None;
     }
 
     /// <inheritdoc />
@@ -468,33 +595,58 @@ public sealed class SkiaDrawContext2D : IDrawContext2D
         }
 
         var unbalancedStateCount = stateDepth;
-        var unbalancedBracketCount = engineBracketDepth;
+        var unbalancedLayerCount = CountBrackets(BracketKind.Layer);
+        var unbalancedUnitCount = CountBrackets(BracketKind.Unit);
         ResetToBaseline();
-        if (unbalancedStateCount != 0 || unbalancedBracketCount != 0)
+        if (unbalancedStateCount != 0 || unbalancedLayerCount != 0 || unbalancedUnitCount != 0)
         {
             throw new InvalidOperationException(
-                $"The render pass ended with {DescribeImbalance(unbalancedStateCount, unbalancedBracketCount)}; baseline state was restored.");
+                $"The render pass ended with {DescribeImbalance(unbalancedStateCount, unbalancedLayerCount, unbalancedUnitCount)}; baseline state was restored.");
         }
     }
 
     /// <summary>
-    /// Names what a pass ended holding. Author pushes and engine brackets are counted separately
-    /// because they are owned by different callers and a fix for one is not a fix for the other.
+    /// Names what a pass ended holding. Author pushes, layer brackets, and unit brackets are counted
+    /// separately because they are owned by different callers — the author, the layer walk, and the
+    /// node walk — and a fix for one is not a fix for another.
     /// </summary>
-    private static string DescribeImbalance(int stateCount, int bracketCount)
+    private static string DescribeImbalance(int stateCount, int layerCount, int unitCount)
     {
-        var states = stateCount != 0
-            ? $"{stateCount} unbalanced context state push(es)"
-            : null;
-        var brackets = bracketCount != 0
-            ? $"{bracketCount} unbalanced engine layer bracket(s)"
-            : null;
-        if (states is null)
+        var parts = new List<string>(3);
+        if (stateCount != 0)
         {
-            return brackets ?? string.Empty;
+            parts.Add($"{stateCount} unbalanced context state push(es)");
+        }
+        if (layerCount != 0)
+        {
+            parts.Add($"{layerCount} unbalanced engine layer bracket(s)");
+        }
+        if (unitCount != 0)
+        {
+            parts.Add($"{unitCount} unbalanced engine unit bracket(s)");
         }
 
-        return brackets is null ? states : $"{states} and {brackets}";
+        return parts.Count switch
+        {
+            0 => string.Empty,
+            1 => parts[0],
+            _ => $"{string.Join(", ", parts.Take(parts.Count - 1))} and {parts[^1]}",
+        };
+    }
+
+    /// <summary>Counts the open engine brackets of one kind.</summary>
+    private int CountBrackets(BracketKind kind)
+    {
+        var count = 0;
+        for (var index = 0; index < engineBracketDepth; index++)
+        {
+            if (bracketStack[index] == kind)
+            {
+                count++;
+            }
+        }
+
+        return count;
     }
 
     /// <summary>
@@ -529,8 +681,8 @@ public sealed class SkiaDrawContext2D : IDrawContext2D
             disposed = true;
             nativePath.Dispose();
             nativePaint.Dispose();
-            DisposeCache(shaderCache);
-            DisposeCache(dashCache);
+            shaderCache.Clear();
+            dashCache.Clear();
             srgbColorSpace.Dispose();
         }
     }
@@ -540,6 +692,15 @@ public sealed class SkiaDrawContext2D : IDrawContext2D
 
     /// <summary>Gets how many dash values currently hold a cached native path effect.</summary>
     internal int CachedDashCount => dashCache.Count;
+
+    /// <summary>Gets the bound both descriptor caches hold to, for tests that pin it.</summary>
+    internal static int DescriptorCacheBound => DescriptorCacheCapacity;
+
+    /// <summary>Gets how many cached shaders have been evicted and disposed over this context's life.</summary>
+    internal int EvictedShaderCount => shaderCache.EvictionCount;
+
+    /// <summary>Gets how many cached dash effects have been evicted and disposed over this context's life.</summary>
+    internal int EvictedDashCount => dashCache.EvictionCount;
 
     private void StampPathPaint(in CorePaint paint)
     {
@@ -580,7 +741,7 @@ public sealed class SkiaDrawContext2D : IDrawContext2D
 
     private SKShader GetShader(in CoreBrush brush)
     {
-        if (shaderCache.TryGetValue(brush, out var cached))
+        if (shaderCache.TryGet(brush, out var cached))
         {
             return cached;
         }
@@ -633,7 +794,7 @@ public sealed class SkiaDrawContext2D : IDrawContext2D
 
     private SKPathEffect GetDashEffect(in CoreStrokeDash dash)
     {
-        if (dashCache.TryGetValue(dash, out var cached))
+        if (dashCache.TryGet(dash, out var cached))
         {
             return cached;
         }
@@ -706,6 +867,16 @@ public sealed class SkiaDrawContext2D : IDrawContext2D
         Array.Resize(ref stateStack, checked(stateStack.Length * 2));
     }
 
+    private void EnsureBracketCapacity()
+    {
+        if (engineBracketDepth < bracketStack.Length)
+        {
+            return;
+        }
+
+        Array.Resize(ref bracketStack, checked(bracketStack.Length * 2));
+    }
+
     private void CommitPush(StateKind state) => stateStack[stateDepth++] = state;
 
     private void Pop(StateKind expected, string name)
@@ -765,7 +936,11 @@ public sealed class SkiaDrawContext2D : IDrawContext2D
             Array.Clear(stateStack, 0, stateDepth);
             stateDepth = 0;
         }
-        engineBracketDepth = 0;
+        if (engineBracketDepth > 0)
+        {
+            Array.Clear(bracketStack, 0, engineBracketDepth);
+            engineBracketDepth = 0;
+        }
         engineSlotBaseline = baseSaveCount;
         passActive = false;
     }
@@ -806,18 +981,6 @@ public sealed class SkiaDrawContext2D : IDrawContext2D
         Persp1 = 0f,
         Persp2 = 1f,
     };
-
-    private static void DisposeCache<TKey, TValue>(Dictionary<TKey, TValue> cache)
-        where TKey : notnull
-        where TValue : IDisposable
-    {
-        foreach (var entry in cache)
-        {
-            entry.Value.Dispose();
-        }
-
-        cache.Clear();
-    }
 
     private static SKStrokeCap ToSkiaStrokeCap(CoreLineCap cap) => cap switch
     {
@@ -887,11 +1050,35 @@ public sealed class SkiaDrawContext2D : IDrawContext2D
         _ => "unknown",
     };
 
+    private static string DescribeBracket(BracketKind kind) => kind switch
+    {
+        BracketKind.Layer => "layer",
+        BracketKind.Unit => "unit",
+        _ => "unknown",
+    };
+
+    private static int SaveSlotsFor(BracketKind kind) => kind switch
+    {
+        BracketKind.Layer => SaveSlotsPerLayerBracket,
+        BracketKind.Unit => SaveSlotsPerUnitBracket,
+        _ => throw new ArgumentOutOfRangeException(nameof(kind), "The engine bracket kind is not supported."),
+    };
+
     private enum StateKind : byte
     {
         None,
         Transform,
         Clip,
         Opacity,
+    }
+
+    /// <summary>
+    /// The engine-owned bracket kinds, which share one save stack and therefore one nesting order.
+    /// </summary>
+    private enum BracketKind : byte
+    {
+        None,
+        Layer,
+        Unit,
     }
 }

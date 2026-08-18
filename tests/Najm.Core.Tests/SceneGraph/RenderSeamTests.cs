@@ -201,6 +201,14 @@ public sealed class RenderSeamTests
         {
         }
 
+        public void BeginUnitBracket(in UnitBracket bracket)
+        {
+        }
+
+        public void EndUnitBracket()
+        {
+        }
+
         public void PushTransform(in Matrix3x2 localTransform)
         {
         }
