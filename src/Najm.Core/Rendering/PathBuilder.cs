@@ -1,4 +1,5 @@
 using System.Numerics;
+using Najm.Utils;
 
 namespace Najm.Core;
 
@@ -149,5 +150,90 @@ public sealed class PathBuilder
         }
 
         commands[Count++] = command;
+    }
+}
+
+/// <summary>Appends interpolating spline geometry to a <see cref="PathBuilder"/>.</summary>
+/// <remarks>
+/// These extensions are the seam between the curve maths in <c>Najm.Utils</c> and path geometry:
+/// they emit one cubic per spline segment, never a sampled polyline, so the backend flattens the
+/// result at the resolution the render scale asks for. Nothing here allocates once the builder has
+/// reached a stable capacity.
+/// </remarks>
+public static class PathBuilderSplineExtensions
+{
+    /// <summary>
+    /// Appends a contour running from the first control point to the last through a Catmull-Rom
+    /// spline.
+    /// </summary>
+    /// <param name="path">The builder to append to.</param>
+    /// <param name="points">The control points, in order; the span is not retained.</param>
+    /// <param name="alpha">
+    /// The parameterization exponent in [0, 1], centripetal by default. See
+    /// <see cref="CatmullRom"/> for why that default is not uniform.
+    /// </param>
+    /// <returns>The same builder, for chaining.</returns>
+    /// <remarks>
+    /// Fewer than two control points describe no curve, and the builder is left untouched — not
+    /// even a <see cref="PathBuilder.MoveTo"/>, so a lone sample cannot leave a stray open contour
+    /// behind for a later <see cref="PathBuilder.Close"/> to pick up. Two points produce the
+    /// straight cubic between them. The contour is left open.
+    /// </remarks>
+    public static PathBuilder AddOpenCatmullRom(
+        this PathBuilder path,
+        ReadOnlySpan<Vector2> points,
+        float alpha = CatmullRom.CentripetalAlpha)
+    {
+        ArgumentNullException.ThrowIfNull(path);
+
+        return Append(path, CatmullRom.Open(points, alpha), close: false);
+    }
+
+    /// <summary>Appends a closed contour looping through the control points as a Catmull-Rom spline.</summary>
+    /// <param name="path">The builder to append to.</param>
+    /// <param name="points">
+    /// The control points, in order, with no repeat of the first point at the end; the span is not
+    /// retained.
+    /// </param>
+    /// <param name="alpha">
+    /// The parameterization exponent in [0, 1], centripetal by default. See
+    /// <see cref="CatmullRom"/> for why that default is not uniform.
+    /// </param>
+    /// <returns>The same builder, for chaining.</returns>
+    /// <remarks>
+    /// The joint at the first control point is as smooth as every other joint. Fewer than two
+    /// control points leave the builder untouched; otherwise the contour is closed.
+    /// </remarks>
+    public static PathBuilder AddClosedCatmullRom(
+        this PathBuilder path,
+        ReadOnlySpan<Vector2> points,
+        float alpha = CatmullRom.CentripetalAlpha)
+    {
+        ArgumentNullException.ThrowIfNull(path);
+
+        return Append(path, CatmullRom.Closed(points, alpha), close: true);
+    }
+
+    private static PathBuilder Append(PathBuilder path, CatmullRomSegments segments, bool close)
+    {
+        if (segments.Count == 0)
+        {
+            return path;
+        }
+
+        var start = segments.Points[0];
+        path.MoveTo(start.X, start.Y);
+        foreach (var segment in segments)
+        {
+            path.CubicTo(
+                segment.Control1.X,
+                segment.Control1.Y,
+                segment.Control2.X,
+                segment.Control2.Y,
+                segment.End.X,
+                segment.End.Y);
+        }
+
+        return close ? path.Close() : path;
     }
 }
