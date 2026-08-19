@@ -1,5 +1,6 @@
 <Solution>
   <Project Path="benchmarks/Najm.Benchmarks/Najm.Benchmarks.csproj" />
+  <Project Path="samples/Najm.Samples.Orrery/Najm.Samples.Orrery.csproj" />
   <Project Path="src/Najm.Core/Najm.Core.csproj" />
   <Project Path="src/Najm.Skia/Najm.Skia.csproj" />
   <Project Path="src/Najm.Text/Najm.Text.csproj" />
