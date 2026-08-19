@@ -515,76 +515,76 @@ public sealed class NodeCompositionTests
     }
 
     /// <summary>Counts the unit brackets a walk asks for, and does nothing else.</summary>
-    private sealed class UnitCountingContext : IDrawContext2D
+    private sealed class UnitCountingContext : DrawContext2DBase
     {
         internal int UnitBracketCount { get; private set; }
 
-        public SurfaceSpec SurfaceSpec { get; } = new(4, 1);
+        public override SurfaceSpec SurfaceSpec { get; } = new(4, 1);
 
-        public RenderCaps Caps => RenderCaps.None;
+        public override RenderCaps Caps => RenderCaps.None;
 
-        public float RenderScale => 1f;
+        public override float RenderScale => 1f;
 
-        public float Scale => 1f;
+        public override float Scale => 1f;
 
-        public void Clear(Color color)
+        public override void Clear(Color color)
         {
         }
 
-        public void DrawPath(PathBuilder path, in Paint paint)
+        public override void DrawPath(PathBuilder path, in Paint paint)
         {
         }
 
-        public void DrawImage(
+        public override void DrawImage(
             IImage image,
             in Matrix3x2 imageToLocal,
             ImageSampling sampling = ImageSampling.Linear)
         {
         }
 
-        public void SetEngineTransform(in Matrix3x2 engineToDevice)
+        public override void SetEngineTransform(in Matrix3x2 engineToDevice)
         {
         }
 
-        public void BeginLayerBracket(in LayerBracket bracket)
+        public override void BeginLayerBracket(in LayerBracket bracket)
         {
         }
 
-        public void EndLayerBracket()
+        public override void EndLayerBracket()
         {
         }
 
-        public void BeginUnitBracket(in UnitBracket bracket) => UnitBracketCount++;
+        public override void BeginUnitBracket(in UnitBracket bracket) => UnitBracketCount++;
 
-        public void EndUnitBracket()
+        public override void EndUnitBracket()
         {
         }
 
-        public void PushTransform(in Matrix3x2 localTransform)
+        public override void PushTransform(in Matrix3x2 localTransform)
         {
         }
 
-        public void PopTransform()
+        public override void PopTransform()
         {
         }
 
-        public void PushClip(in Rect bounds)
+        public override void PushClip(in Rect bounds)
         {
         }
 
-        public void PushClip(PathBuilder path)
+        public override void PushClip(PathBuilder path)
         {
         }
 
-        public void PopClip()
+        public override void PopClip()
         {
         }
 
-        public void PushOpacity(float opacity)
+        public override void PushOpacity(float opacity)
         {
         }
 
-        public void PopOpacity()
+        public override void PopOpacity()
         {
         }
     }

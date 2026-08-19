@@ -3,12 +3,29 @@ using Najm.Utils;
 
 namespace Najm.Core;
 
-/// <summary>Defines the backend-neutral Tier-1 drawing surface used by portable drawables.</summary>
+/// <summary>Defines the backend-neutral drawing surface used by portable drawables.</summary>
 /// <remarks>
+/// <para>
 /// A render target owns and reuses its context. Callers must not dispose or retain it beyond the
 /// target's lifetime. Geometry and paint values are consumed synchronously and are not retained.
 /// This interface is pre-release; its contract will be completed before external package
 /// publication.
+/// </para>
+/// <para>
+/// <strong>Two tiers, one interface.</strong> <see cref="DrawPath"/>, <see cref="DrawImage"/>, and
+/// <see cref="Clear"/> are the Tier-1 primitives every backend lowers natively (ARCHITECTURE §7.1).
+/// The <c>Draw*</c> shape members below them are Tier-2 conveniences (§7.2): they are declared here
+/// because a portable drawable only ever sees this interface — <c>ctx.DrawCircle(...)</c> is the
+/// documented authoring form — but they are <em>implemented once</em>, in
+/// <see cref="DrawContext2DBase"/>, in terms of <see cref="DrawPath"/>.
+/// </para>
+/// <para>
+/// <strong>Implement this interface by deriving from <see cref="DrawContext2DBase"/>.</strong>
+/// Implementing it directly means writing the conveniences again, which is precisely the duplication
+/// the tier split exists to prevent. The base class re-declares the Tier-1 members abstract and
+/// leaves the Tier-2 members virtual, so a backend writes only what is genuinely backend-specific
+/// and may still override a convenience where a native lowering is warranted.
+/// </para>
 /// </remarks>
 public interface IDrawContext2D
 {
@@ -51,6 +68,75 @@ public interface IDrawContext2D
         IImage image,
         in Matrix3x2 imageToLocal,
         ImageSampling sampling = ImageSampling.Linear);
+
+    /// <summary>Fills or strokes a circle. Tier-2 convenience; see <see cref="DrawContext2DBase"/>.</summary>
+    /// <param name="center">The finite local-unit center.</param>
+    /// <param name="radius">The finite nonnegative local-unit radius.</param>
+    /// <param name="paint">The fill or stroke descriptor.</param>
+    /// <remarks>
+    /// Equivalent to <see cref="DrawPath"/> over
+    /// <see cref="PathBuilderShapeExtensions.AddCircle"/>, and pixel-identical to it by design.
+    /// </remarks>
+    void DrawCircle(in Vector2 center, float radius, in Paint paint);
+
+    /// <summary>Fills or strokes an axis-aligned ellipse.</summary>
+    /// <param name="center">The finite local-unit center.</param>
+    /// <param name="radii">The finite nonnegative local-unit semi-axes.</param>
+    /// <param name="paint">The fill or stroke descriptor.</param>
+    /// <remarks>
+    /// Equivalent to <see cref="DrawPath"/> over
+    /// <see cref="PathBuilderShapeExtensions.AddEllipse"/>, and pixel-identical to it by design.
+    /// </remarks>
+    void DrawEllipse(in Vector2 center, in Vector2 radii, in Paint paint);
+
+    /// <summary>Fills or strokes an axis-aligned rectangle.</summary>
+    /// <param name="bounds">The rectangle, in local units.</param>
+    /// <param name="paint">The fill or stroke descriptor.</param>
+    void DrawRect(in Rect bounds, in Paint paint);
+
+    /// <summary>Fills or strokes a rectangle whose corners are elliptical quarter turns.</summary>
+    /// <param name="bounds">The rectangle, in local units.</param>
+    /// <param name="cornerRadii">
+    /// The finite nonnegative local-unit corner semi-axes, each clamped to half the corresponding
+    /// side.
+    /// </param>
+    /// <param name="paint">The fill or stroke descriptor.</param>
+    void DrawRoundRect(in Rect bounds, in Vector2 cornerRadii, in Paint paint);
+
+    /// <summary>Strokes one straight segment.</summary>
+    /// <param name="start">The finite local-unit start point.</param>
+    /// <param name="end">The finite local-unit end point.</param>
+    /// <param name="paint">The stroke descriptor. A fill paint paints nothing, because the
+    /// segment encloses no area.</param>
+    void DrawLine(in Vector2 start, in Vector2 end, in Paint paint);
+
+    /// <summary>Strokes or fills a run of straight segments.</summary>
+    /// <param name="points">The finite local-unit vertices, in order; the span is not retained.</param>
+    /// <param name="paint">The fill or stroke descriptor.</param>
+    /// <param name="close">Whether to close the run back to its first point.</param>
+    /// <remarks>Fewer than two points describe no contour and paint nothing.</remarks>
+    void DrawPolyline(ReadOnlySpan<Vector2> points, in Paint paint, bool close = false);
+
+    /// <summary>Fills or strokes an elliptical arc.</summary>
+    /// <param name="center">The finite local-unit center.</param>
+    /// <param name="radii">The finite nonnegative local-unit semi-axes.</param>
+    /// <param name="startAngle">Where the arc begins, measured from <c>center + (radii.X, 0)</c>.</param>
+    /// <param name="sweepAngle">
+    /// How far the arc turns; positive turns from +x toward +y, which is clockwise on screen.
+    /// </param>
+    /// <param name="mode">How the arc's two ends are joined into a contour.</param>
+    /// <param name="paint">The fill or stroke descriptor.</param>
+    /// <remarks>
+    /// The arc is split so no cubic spans more than a quarter turn; see
+    /// <see cref="PathBuilderShapeExtensions.QuarterTurnKappa"/>.
+    /// </remarks>
+    void DrawArc(
+        in Vector2 center,
+        in Vector2 radii,
+        Angle startAngle,
+        Angle sweepAngle,
+        ArcMode mode,
+        in Paint paint);
 
     /// <summary>
     /// Backend-facing SPI: replaces the engine transform installed above all author state.

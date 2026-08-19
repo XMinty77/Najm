@@ -649,17 +649,17 @@ public sealed class RenderTraverserTests
         }
     }
 
-    private class SilentContext : IDrawContext2D
+    private class SilentContext : DrawContext2DBase
     {
         internal SilentContext(float renderScale = 1f) => RenderScale = renderScale;
 
-        public SurfaceSpec SurfaceSpec { get; } = new(64, 64);
+        public override SurfaceSpec SurfaceSpec { get; } = new(64, 64);
 
-        public RenderCaps Caps => RenderCaps.None;
+        public override RenderCaps Caps => RenderCaps.None;
 
-        public float RenderScale { get; }
+        public override float RenderScale { get; }
 
-        public float Scale => 1f;
+        public override float Scale => 1f;
 
         internal int DrawCount { get; private set; }
 
@@ -675,27 +675,27 @@ public sealed class RenderTraverserTests
         /// <summary>Gets how many engine unit brackets have been opened in total.</summary>
         internal int UnitCount { get; private set; }
 
-        public void Clear(Color color)
+        public override void Clear(Color color)
         {
         }
 
-        public void DrawPath(PathBuilder path, in Paint paint) => DrawCount++;
+        public override void DrawPath(PathBuilder path, in Paint paint) => DrawCount++;
 
-        public void DrawImage(IImage image, in Matrix3x2 imageToLocal, ImageSampling sampling = ImageSampling.Linear)
+        public override void DrawImage(IImage image, in Matrix3x2 imageToLocal, ImageSampling sampling = ImageSampling.Linear)
         {
         }
 
-        public virtual void SetEngineTransform(in Matrix3x2 engineToDevice)
+        public override void SetEngineTransform(in Matrix3x2 engineToDevice)
         {
         }
 
-        public virtual void BeginLayerBracket(in LayerBracket bracket)
+        public override void BeginLayerBracket(in LayerBracket bracket)
         {
             BracketDepth++;
             BracketCount++;
         }
 
-        public virtual void EndLayerBracket()
+        public override void EndLayerBracket()
         {
             if (BracketDepth == 0)
             {
@@ -705,13 +705,13 @@ public sealed class RenderTraverserTests
             BracketDepth--;
         }
 
-        public virtual void BeginUnitBracket(in UnitBracket bracket)
+        public override void BeginUnitBracket(in UnitBracket bracket)
         {
             UnitDepth++;
             UnitCount++;
         }
 
-        public virtual void EndUnitBracket()
+        public override void EndUnitBracket()
         {
             if (UnitDepth == 0)
             {
@@ -721,31 +721,31 @@ public sealed class RenderTraverserTests
             UnitDepth--;
         }
 
-        public void PushTransform(in Matrix3x2 localTransform)
+        public override void PushTransform(in Matrix3x2 localTransform)
         {
         }
 
-        public void PopTransform()
+        public override void PopTransform()
         {
         }
 
-        public void PushClip(in Rect bounds)
+        public override void PushClip(in Rect bounds)
         {
         }
 
-        public void PushClip(PathBuilder path)
+        public override void PushClip(PathBuilder path)
         {
         }
 
-        public void PopClip()
+        public override void PopClip()
         {
         }
 
-        public void PushOpacity(float opacity)
+        public override void PushOpacity(float opacity)
         {
         }
 
-        public void PopOpacity()
+        public override void PopOpacity()
         {
         }
     }

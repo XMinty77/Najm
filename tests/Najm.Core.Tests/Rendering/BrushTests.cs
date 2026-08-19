@@ -152,6 +152,41 @@ public sealed class BrushTests
     public void PatternBrush_RequiresAnImage() =>
         Assert.ThrowsExactly<ArgumentNullException>(() => Brush.Pattern(null!));
 
+    [TestMethod]
+    public void FadeFactories_BuildTheTwoStopRampThatDoesNotBruise()
+    {
+        var glow = Color.Srgb(0.9f, 0.4f, 0.1f, 0.75f);
+
+        var linear = Brush.LinearFade(new Vector2(0f, 0f), new Vector2(10f, 0f), glow, SpreadMode.Repeat);
+        var radial = Brush.RadialFade(new Vector2(2f, 3f), 6f, glow);
+
+        Assert.AreEqual(BrushKind.LinearGradient, linear.Kind);
+        Assert.AreEqual(SpreadMode.Repeat, linear.Spread, "The spread mode must reach the gradient.");
+        Assert.AreEqual(2, linear.Stops.Length);
+        Assert.AreEqual(new GradientStop(0f, glow), linear.Stops[0]);
+        Assert.AreEqual(new GradientStop(1f, glow.Fade()), linear.Stops[1]);
+
+        Assert.AreEqual(BrushKind.RadialGradient, radial.Kind);
+        Assert.AreEqual(new Vector2(2f, 3f), radial.Center);
+        Assert.AreEqual(6f, radial.Radius);
+        Assert.AreEqual(new GradientStop(1f, glow.Fade()), radial.Stops[1]);
+        Assert.AreNotEqual(
+            new GradientStop(1f, Color.Transparent),
+            radial.Stops[1],
+            "The far stop must keep the color's RGB, not collapse to transparent black.");
+    }
+
+    [TestMethod]
+    public void FadeFactories_ValidateLikeTheirGeneralForms()
+    {
+        Assert.ThrowsExactly<ArgumentOutOfRangeException>(
+            () => Brush.LinearFade(new Vector2(float.NaN, 0f), Vector2.One, Color.White));
+        Assert.ThrowsExactly<ArgumentOutOfRangeException>(
+            () => Brush.RadialFade(Vector2.Zero, 0f, Color.White));
+        Assert.ThrowsExactly<ArgumentException>(
+            () => Brush.RadialFade(Vector2.Zero, 1f, Color.White, (SpreadMode)int.MaxValue));
+    }
+
     private static GradientStop[] Ramp() =>
         [new GradientStop(0f, Color.Black), new GradientStop(1f, Color.White)];
 }

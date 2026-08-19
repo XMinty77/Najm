@@ -160,6 +160,39 @@ public sealed class ColorTests
         Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => Color.OkLch(float.NaN, 0.1f, 0d));
     }
 
+    [TestMethod]
+    public void FadeKeepsRgbAndZeroesAlpha()
+    {
+        // The gradient-safe fade: only coverage moves. Fading to Color.Transparent instead would
+        // move RGB toward black too, which is what bruises a soft glow.
+        var amber = Color.Srgb(1f, 0.82f, 0.35f, 0.6f);
+
+        var faded = amber.Fade();
+
+        Assert.AreEqual(amber.R, faded.R, "Red must survive the fade.");
+        Assert.AreEqual(amber.G, faded.G, "Green must survive the fade.");
+        Assert.AreEqual(amber.B, faded.B, "Blue must survive the fade.");
+        Assert.AreEqual(0f, faded.A, "Alpha must reach zero.");
+        Assert.AreEqual(amber.WithAlpha(0f), faded, "Fade is WithAlpha(0) under a name that says why.");
+        Assert.AreNotEqual(Color.Transparent, faded, "It is emphatically not transparent black.");
+        Assert.AreEqual(Color.Transparent, Color.Black.Fade(), "Only for black do the two coincide.");
+    }
+
+    [TestMethod]
+    public void FadePreservesExtendedGamutChannels()
+    {
+        // Fade must not clip: a wide-gamut color that is still being carried through a pipeline
+        // keeps its out-of-cube channels, exactly as WithAlpha does.
+        var wide = Color.Srgb(1.2f, -0.05f, 0.4f);
+
+        var faded = wide.Fade();
+
+        Assert.AreEqual(1.2f, faded.R);
+        Assert.AreEqual(-0.05f, faded.G);
+        Assert.AreEqual(0f, faded.A);
+        Assert.IsFalse(faded.IsInSrgbGamut, "Fade is an alpha operation, not a gamut operation.");
+    }
+
     private static void AssertColorClose(Color expected, Color actual, float tolerance = 1e-6f)
     {
         Assert.AreEqual(expected.R, actual.R, tolerance, "Red channel differs.");

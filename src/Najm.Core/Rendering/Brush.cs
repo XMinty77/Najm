@@ -18,6 +18,16 @@ namespace Najm.Core;
 /// brush around allocates nothing. Only the factories allocate, once, when the brush value is built.
 /// </para>
 /// <para>
+/// <b>Interpolation is straight, not premultiplied.</b> Between two stops a backend interpolates R,
+/// G, B, and A independently on the straight (unpremultiplied) values this descriptor stores. That
+/// is the model SVG, CSS, Skia, and PDF all specify, and it is not negotiable per brush. Its one
+/// sharp edge is fading out: a stop at <see cref="Najm.Utils.Color.Transparent"/> is transparent
+/// <em>black</em>, so a ramp toward it walks RGB to zero as alpha falls and smears grey through the
+/// fade. Fade to the same color at zero alpha instead — <see cref="Najm.Utils.Color.Fade"/> — or let
+/// <see cref="LinearFade"/> and <see cref="RadialFade"/> build the ramp so the question never comes
+/// up.
+/// </para>
+/// <para>
 /// <b>Equality.</b> Two brushes are equal when their descriptors match and their stop
 /// <em>contents</em> match — never by array reference — because backends key their gradient shader
 /// caches by brush value (NAJM-SKIA II.2). Reference equality would miss on every independently
@@ -100,6 +110,12 @@ public readonly struct Brush : IEquatable<Brush>
     /// <param name="end">The finite local-unit point reached by offset one.</param>
     /// <param name="stops">At least two stops in non-decreasing offset order; copied.</param>
     /// <param name="spread">How the gradient paints beyond the segment.</param>
+    /// <remarks>
+    /// Stops interpolate straight, unpremultiplied color. To fade out, end on the ramp's own color at
+    /// zero alpha (<see cref="Najm.Utils.Color.Fade"/>), not on
+    /// <see cref="Najm.Utils.Color.Transparent"/>, which is transparent <em>black</em> and drags the
+    /// midtones toward grey. <see cref="LinearFade"/> is the two-stop form of that.
+    /// </remarks>
     public static Brush Linear(
         Vector2 start,
         Vector2 end,
@@ -126,6 +142,13 @@ public readonly struct Brush : IEquatable<Brush>
     /// <param name="radius">The finite positive local-unit radius reached by offset one.</param>
     /// <param name="stops">At least two stops in non-decreasing offset order; copied.</param>
     /// <param name="spread">How the gradient paints beyond the radius.</param>
+    /// <remarks>
+    /// Stops interpolate straight, unpremultiplied color. To fade out, end on the ramp's own color at
+    /// zero alpha (<see cref="Najm.Utils.Color.Fade"/>), not on
+    /// <see cref="Najm.Utils.Color.Transparent"/>, which is transparent <em>black</em> and drags the
+    /// midtones toward grey — the classic dirty halo. <see cref="RadialFade"/> is the two-stop form of
+    /// that, and it is what a soft glow wants.
+    /// </remarks>
     public static Brush Radial(
         Vector2 center,
         float radius,
@@ -152,6 +175,46 @@ public readonly struct Brush : IEquatable<Brush>
             image: null,
             CopyStops(stops));
     }
+
+    /// <summary>Creates a linear gradient from one color to that same color at zero alpha.</summary>
+    /// <param name="start">The finite local-unit point where the color is at full strength.</param>
+    /// <param name="end">The finite local-unit point where it has faded to nothing.</param>
+    /// <param name="color">The color to fade out. Its own alpha is the ramp's starting alpha.</param>
+    /// <param name="spread">How the gradient paints beyond the segment.</param>
+    /// <returns>A two-stop gradient from <paramref name="color"/> to <c>color.Fade()</c>.</returns>
+    /// <remarks>
+    /// The point of this factory is that it is impossible to get the trap wrong with it: it builds
+    /// the ramp whose RGB never moves, so only coverage falls off. Reach for
+    /// <see cref="Linear(Vector2, Vector2, ReadOnlySpan{GradientStop}, SpreadMode)"/> directly when
+    /// the falloff needs a shaped curve rather than a straight line — and then end that stop list on
+    /// <see cref="Najm.Utils.Color.Fade"/> for the same reason.
+    /// </remarks>
+    public static Brush LinearFade(
+        Vector2 start,
+        Vector2 end,
+        Color color,
+        SpreadMode spread = SpreadMode.Clamp) =>
+        Linear(start, end, [new GradientStop(0f, color), new GradientStop(1f, color.Fade())], spread);
+
+    /// <summary>Creates a radial gradient from one color at the center to nothing at the rim.</summary>
+    /// <param name="center">The finite local-unit center, where the color is at full strength.</param>
+    /// <param name="radius">The finite positive local-unit radius, where it has faded to nothing.</param>
+    /// <param name="color">The color to fade out. Its own alpha is the ramp's peak alpha.</param>
+    /// <param name="spread">How the gradient paints beyond the radius.</param>
+    /// <returns>A two-stop gradient from <paramref name="color"/> to <c>color.Fade()</c>.</returns>
+    /// <remarks>
+    /// This is the correct soft glow in one call: RGB is constant across the whole disc and only
+    /// alpha ramps, so the halo stays the color of the light instead of bruising grey halfway out.
+    /// A shaped falloff — light does not fall off linearly — still belongs in an explicit stop list
+    /// through <see cref="Radial(Vector2, float, ReadOnlySpan{GradientStop}, SpreadMode)"/>; the rule
+    /// about the far end is the same there.
+    /// </remarks>
+    public static Brush RadialFade(
+        Vector2 center,
+        float radius,
+        Color color,
+        SpreadMode spread = SpreadMode.Clamp) =>
+        Radial(center, radius, [new GradientStop(0f, color), new GradientStop(1f, color.Fade())], spread);
 
     /// <summary>Creates a brush tiling an image handle across the painted geometry.</summary>
     /// <param name="image">The image handle to tile. The brush does not take ownership.</param>

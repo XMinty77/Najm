@@ -21,6 +21,15 @@ namespace Najm.Skia;
 
 /// <summary>Lowers portable Tier-1 drawing commands onto a target-owned Skia canvas.</summary>
 /// <remarks>
+/// <para>
+/// Tier-1 only: this class lowers <c>Clear</c>, <c>DrawPath</c>, and <c>DrawImage</c>, and inherits
+/// every Tier-2 convenience from <see cref="DrawContext2DBase"/> unchanged. ARCHITECTURE §7.2
+/// permits overriding one — <c>DrawCircle</c> onto <c>SKCanvas.DrawCircle</c> is the example it
+/// gives — and none is overridden here, deliberately: a native oval rasterizes differently from
+/// the four-cubic path an author writes by hand, and the guarantee worth more than the marginal
+/// quality is that a convenience and its explicit Tier-1 spelling land on identical pixels.
+/// </para>
+/// <para>
 /// A <see cref="SkiaRenderTarget"/> owns and reuses this object. Authors receive it as a borrowed
 /// <see cref="IDrawContext2D"/> and must not retain it after the target is disposed. One native
 /// scratch path and paint are backend-owned, rewound or reset, and reused for every draw. Rewinding
@@ -33,8 +42,9 @@ namespace Najm.Skia;
 /// context-owned caches keyed by the portable descriptor <em>value</em>: the first appearance of a
 /// gradient or dash allocates, every repetition is a dictionary hit that allocates nothing, and the
 /// caches are bounded so an animated descriptor cannot pin native memory frame after frame.
+/// </para>
 /// </remarks>
-public sealed class SkiaDrawContext2D : IDrawContext2D
+public sealed class SkiaDrawContext2D : DrawContext2DBase
 {
     private const int InitialStateCapacity = 16;
 
@@ -124,10 +134,10 @@ public sealed class SkiaDrawContext2D : IDrawContext2D
     }
 
     /// <inheritdoc />
-    public SurfaceSpec SurfaceSpec { get; }
+    public override SurfaceSpec SurfaceSpec { get; }
 
     /// <inheritdoc />
-    public RenderCaps Caps
+    public override RenderCaps Caps
     {
         get
         {
@@ -137,7 +147,7 @@ public sealed class SkiaDrawContext2D : IDrawContext2D
     }
 
     /// <inheritdoc />
-    public float RenderScale
+    public override float RenderScale
     {
         get
         {
@@ -147,7 +157,7 @@ public sealed class SkiaDrawContext2D : IDrawContext2D
     }
 
     /// <inheritdoc />
-    public float Scale
+    public override float Scale
     {
         get
         {
@@ -167,7 +177,7 @@ public sealed class SkiaDrawContext2D : IDrawContext2D
     }
 
     /// <inheritdoc />
-    public void Clear(UtilsColor color)
+    public override void Clear(UtilsColor color)
     {
         EnsureActive();
         StampColor(color, SKBlendMode.Src);
@@ -175,7 +185,7 @@ public sealed class SkiaDrawContext2D : IDrawContext2D
     }
 
     /// <inheritdoc />
-    public void DrawPath(CorePathBuilder path, in CorePaint paint)
+    public override void DrawPath(CorePathBuilder path, in CorePaint paint)
     {
         EnsureActive();
         ArgumentNullException.ThrowIfNull(path);
@@ -186,7 +196,7 @@ public sealed class SkiaDrawContext2D : IDrawContext2D
     }
 
     /// <inheritdoc />
-    public void DrawImage(
+    public override void DrawImage(
         IImage image,
         in Matrix3x2 imageToLocal,
         CoreImageSampling sampling = CoreImageSampling.Linear)
@@ -233,7 +243,7 @@ public sealed class SkiaDrawContext2D : IDrawContext2D
     /// sub-rectangle of the frame composes its device offset below this transform; a full-frame pass
     /// has none and installs exactly what it is handed.
     /// </remarks>
-    public void SetEngineTransform(in Matrix3x2 engineToDevice)
+    public override void SetEngineTransform(in Matrix3x2 engineToDevice)
     {
         EnsureActive();
         EnsureFiniteMatrix(engineToDevice, nameof(engineToDevice));
@@ -258,7 +268,7 @@ public sealed class SkiaDrawContext2D : IDrawContext2D
     /// freshly bound layer target. A transparent clear is skipped because source-over with a zero
     /// alpha source is the identity, not because it is close enough.
     /// </remarks>
-    public void BeginLayerBracket(in LayerBracket bracket)
+    public override void BeginLayerBracket(in LayerBracket bracket)
     {
         EnsureActive();
         if (stateDepth != 0)
@@ -315,7 +325,7 @@ public sealed class SkiaDrawContext2D : IDrawContext2D
     }
 
     /// <inheritdoc />
-    public void EndLayerBracket() => EndBracket(BracketKind.Layer);
+    public override void EndLayerBracket() => EndBracket(BracketKind.Layer);
 
     /// <inheritdoc />
     /// <remarks>
@@ -334,7 +344,7 @@ public sealed class SkiaDrawContext2D : IDrawContext2D
     /// by that viewport rather than by the whole surface.
     /// </para>
     /// </remarks>
-    public void BeginUnitBracket(in UnitBracket bracket)
+    public override void BeginUnitBracket(in UnitBracket bracket)
     {
         EnsureActive();
         if (stateDepth != 0)
@@ -373,7 +383,7 @@ public sealed class SkiaDrawContext2D : IDrawContext2D
     }
 
     /// <inheritdoc />
-    public void EndUnitBracket() => EndBracket(BracketKind.Unit);
+    public override void EndUnitBracket() => EndBracket(BracketKind.Unit);
 
     /// <summary>
     /// Closes the innermost engine bracket, which must be of <paramref name="expected"/> kind.
@@ -414,7 +424,7 @@ public sealed class SkiaDrawContext2D : IDrawContext2D
     }
 
     /// <inheritdoc />
-    public void PushTransform(in Matrix3x2 localTransform)
+    public override void PushTransform(in Matrix3x2 localTransform)
     {
         EnsureActive();
         EnsureFiniteMatrix(localTransform, nameof(localTransform));
@@ -435,10 +445,10 @@ public sealed class SkiaDrawContext2D : IDrawContext2D
     }
 
     /// <inheritdoc />
-    public void PopTransform() => Pop(StateKind.Transform, "transform");
+    public override void PopTransform() => Pop(StateKind.Transform, "transform");
 
     /// <inheritdoc />
-    public void PushClip(in CoreRect bounds)
+    public override void PushClip(in CoreRect bounds)
     {
         EnsureActive();
         EnsureStateCapacity();
@@ -458,7 +468,7 @@ public sealed class SkiaDrawContext2D : IDrawContext2D
     }
 
     /// <inheritdoc />
-    public void PushClip(CorePathBuilder path)
+    public override void PushClip(CorePathBuilder path)
     {
         EnsureActive();
         ArgumentNullException.ThrowIfNull(path);
@@ -479,10 +489,10 @@ public sealed class SkiaDrawContext2D : IDrawContext2D
     }
 
     /// <inheritdoc />
-    public void PopClip() => Pop(StateKind.Clip, "clip");
+    public override void PopClip() => Pop(StateKind.Clip, "clip");
 
     /// <inheritdoc />
-    public void PushOpacity(float opacity)
+    public override void PushOpacity(float opacity)
     {
         EnsureActive();
         if (!float.IsFinite(opacity) || opacity < 0f || opacity > 1f)
@@ -516,7 +526,7 @@ public sealed class SkiaDrawContext2D : IDrawContext2D
     }
 
     /// <inheritdoc />
-    public void PopOpacity() => Pop(StateKind.Opacity, "opacity");
+    public override void PopOpacity() => Pop(StateKind.Opacity, "opacity");
 
     internal void BeginPass(
         float renderScale,

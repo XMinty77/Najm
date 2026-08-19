@@ -53,6 +53,19 @@ public readonly struct Color : IEquatable<Color>
     public float A { get; }
 
     /// <summary>Gets transparent black.</summary>
+    /// <remarks>
+    /// <para>
+    /// This is transparent <em>black</em>: RGB is zero and so is alpha. Under source-over
+    /// compositing that is the identity, so as a flat fill it is genuinely "nothing".
+    /// </para>
+    /// <para>
+    /// <strong>It is almost never the right end of a gradient.</strong> Gradient stops interpolate
+    /// straight (unpremultiplied) color, so a ramp from red to this value passes through half-alpha
+    /// <em>dark</em> red and leaves a grey bruise through what should be a clean fade. Fade with
+    /// <see cref="Fade"/> — same RGB, zero alpha — and the ramp stays the color it started as the
+    /// whole way out.
+    /// </para>
+    /// </remarks>
     public static Color Transparent => default;
 
     /// <summary>Gets opaque black.</summary>
@@ -82,7 +95,37 @@ public readonly struct Color : IEquatable<Color>
         new(Math.Clamp(R, 0f, 1f), Math.Clamp(G, 0f, 1f), Math.Clamp(B, 0f, 1f), A);
 
     /// <summary>Returns this color with a validated replacement alpha.</summary>
+    /// <param name="alpha">A finite alpha value in [0, 1].</param>
     public Color WithAlpha(float alpha) => new(R, G, B, alpha);
+
+    /// <summary>Returns this color at zero alpha, keeping its RGB channels.</summary>
+    /// <remarks>
+    /// <para>
+    /// This is <c>WithAlpha(0)</c> under a name that says what it is for: the correct far end of a
+    /// fade. Gradient stops interpolate straight (unpremultiplied) color and alpha independently, so
+    /// the RGB an author writes at the transparent end is still visible at every partially
+    /// transparent sample in between. Fading to <see cref="Transparent"/> drags RGB toward black
+    /// along the way and dirties the falloff; fading to <c>Fade()</c> holds the hue and moves only
+    /// coverage, which is what a glow, a halo, a vignette, or a feathered edge actually means.
+    /// </para>
+    /// <para>
+    /// The two agree only when the color is already black, which is why the mistake survives a
+    /// dark-background check and shows up later.
+    /// </para>
+    /// <example>
+    /// <code>
+    /// // Wrong: passes through half-alpha grey.
+    /// Brush.Radial(center, r, [new(0f, glow), new(1f, Color.Transparent)]);
+    ///
+    /// // Right: holds the hue and fades only coverage.
+    /// Brush.Radial(center, r, [new(0f, glow), new(1f, glow.Fade())]);
+    ///
+    /// // Shorter still, and impossible to get wrong.
+    /// Brush.RadialFade(center, r, glow);
+    /// </code>
+    /// </example>
+    /// </remarks>
+    public Color Fade() => new(R, G, B, 0f);
 
     /// <summary>
     /// Converts the encoded RGB channels to linear-light extended sRGB.
