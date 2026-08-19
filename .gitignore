@@ -35,3 +35,6 @@ Thumbs.db
 *.tmp
 *.bak
 
+
+# Sample render output
+samples/**/out/

@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>Najm.Samples.Pendulum</RootNamespace>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/Najm.Core/Najm.Core.csproj" />
+    <ProjectReference Include="../../src/Najm.Skia/Najm.Skia.csproj" />
+    <ProjectReference Include="../../src/Najm.Utils/Najm.Utils.csproj" />
+  </ItemGroup>
+</Project>
