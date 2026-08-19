@@ -360,21 +360,20 @@ public interface IDrawContext2D
     /// discards whatever was installed, and the caller installs what it needs next.
     /// </para>
     /// <para>
-    /// Unit and layer brackets share one last-in-first-out order: a unit opened inside a layer must
-    /// close before that layer does, and <see cref="EndLayerBracket"/> refuses to close across an
-    /// open unit. Every bracket must be closed before the pass ends; an unbalanced one is reported
-    /// when the pass ends, naming its own kind.
+    /// Every engine bracket kind — layer, unit, and clip — shares one last-in-first-out order: a
+    /// unit opened inside a layer must close before that layer does, and <see cref="EndLayerBracket"/>
+    /// refuses to close across an open unit. Every bracket must be closed before the pass ends; an
+    /// unbalanced one is reported when the pass ends, naming its own kind.
     /// </para>
     /// <para>
-    /// Opening also intersects <see cref="UnitBracket.Clip"/> when one is set, under
-    /// <see cref="UnitBracket.ClipToDevice"/>, and the clip is released when the bracket closes.
-    /// Clipping the unit at its bracket rather than inside each leaf is what makes
-    /// <see cref="Node2D.Clip"/> bound a whole subtree; a descendant's own
-    /// <see cref="PushClip(in Rect)"/> composes strictly inside it.
+    /// A clip is <em>not</em> here. §6.7's table says clip state alone does not isolate, so a clip
+    /// bounds a subtree through <see cref="BeginClipBracket(in ClipBracket)"/> — no offscreen and no
+    /// stacking scope — and a node that both clips and isolates opens the clip bracket outside this
+    /// one, so the clip bounds what this group captures.
     /// </para>
     /// <para>
-    /// M1 scope: opacity, blend, and a rectangular clip. <c>Mask</c>, <c>Effect</c>, and
-    /// <c>Backdrop</c> are M2, as are path clips; no part of them is approximated here.
+    /// M1 scope: opacity and blend. <c>Mask</c>, <c>Effect</c>, and <c>Backdrop</c> are M2; no part
+    /// of them is approximated here.
     /// </para>
     /// </remarks>
     /// <exception cref="ArgumentOutOfRangeException">
@@ -398,6 +397,65 @@ public interface IDrawContext2D
     /// layer bracket rather than a unit bracket, or the author state stack is not empty.
     /// </exception>
     void EndUnitBracket();
+
+    /// <summary>
+    /// Backend-facing SPI: opens a group that bounds one node's subtree to a rectangle without
+    /// isolating it.
+    /// </summary>
+    /// <param name="bracket">The clip this group applies.</param>
+    /// <remarks>
+    /// <para>
+    /// This member is called by the engine's render traverser, not by authors, and it realizes
+    /// §6.7's <c>Clip</c> for the rectangular case M1 expresses. Opening intersects the current clip
+    /// with <see cref="ClipBracket.Clip"/> read under <see cref="ClipBracket.ClipToDevice"/> —
+    /// antialiased, and under that mapping rather than in device pixels, so a rotated clip stays
+    /// rotated instead of squaring off — and closing releases it.
+    /// </para>
+    /// <para>
+    /// <strong>This bracket must not stage an offscreen.</strong> Bounding is not compositing: a
+    /// clip needs one saved clip entry, and §6.7's table says clip state alone does not isolate. A
+    /// backend that realized this with a group would both pay for a layer nothing reads and change
+    /// the semantics — a descendant carrying a non-default <see cref="Node2D.Blend"/> would then
+    /// composite against the clipped subtree instead of against whatever lies beneath the clipping
+    /// node, and those two frames differ visibly.
+    /// </para>
+    /// <para>
+    /// It is nevertheless a bracket and not a <see cref="PushClip(in Rect)"/>: it spans the node's
+    /// own paint and every descendant's, it is tracked with the engine's own bracket depth rather
+    /// than with author state, and <see cref="SetEngineTransform"/> is therefore legal inside it —
+    /// which is what lets the clip bound a whole subtree that each leaf reaches through a per-node
+    /// transform of its own. A descendant's <see cref="PushClip(in Rect)"/> composes strictly inside
+    /// it and cannot widen it.
+    /// </para>
+    /// <para>
+    /// A node that clips and isolates opens this bracket outside its
+    /// <see cref="BeginUnitBracket(in UnitBracket)"/>, matching §6.7's semantic order — clip, then
+    /// render node and children, then composite with opacity and blend — so that the clip bounds
+    /// what the unit's group captures rather than being applied inside it.
+    /// </para>
+    /// <para>
+    /// Clip, unit, and layer brackets share one last-in-first-out order and one imbalance report,
+    /// each kind counted and named separately.
+    /// </para>
+    /// </remarks>
+    /// <exception cref="InvalidOperationException">
+    /// No pass is active, or the author state stack is not empty.
+    /// </exception>
+    void BeginClipBracket(in ClipBracket bracket);
+
+    /// <summary>
+    /// Backend-facing SPI: closes the most recently opened engine clip bracket, releasing its clip.
+    /// </summary>
+    /// <remarks>
+    /// The engine transform installed inside the clip does not survive the close; the caller
+    /// installs the one it needs next. Author state is unaffected, because it must be empty here.
+    /// Nothing is composited, because nothing was staged.
+    /// </remarks>
+    /// <exception cref="InvalidOperationException">
+    /// No pass is active, no engine clip bracket is open, the innermost open engine bracket is of
+    /// another kind, or the author state stack is not empty.
+    /// </exception>
+    void EndClipBracket();
 
     /// <summary>Saves state and composes a finite local transform below the engine transform.</summary>
     void PushTransform(in Matrix3x2 localTransform);

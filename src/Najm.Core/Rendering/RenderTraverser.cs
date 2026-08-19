@@ -21,10 +21,11 @@ namespace Najm.Core;
 /// <see cref="Node.Render(IDrawContext2D)"/> runs, so the traverser never brackets the walk in
 /// author state — an outstanding push would make the next engine transform illegal. Where the walk
 /// does need a bracket, it uses the engine's own:
-/// <see cref="IDrawContext2D.BeginLayerBracket(in LayerBracket)"/> around a layer and
+/// <see cref="IDrawContext2D.BeginLayerBracket(in LayerBracket)"/> around a layer,
 /// <see cref="IDrawContext2D.BeginUnitBracket(in UnitBracket)"/> around an isolating node's
-/// subtree, whose depths are tracked apart from author state precisely so a per-node transform can
-/// be installed inside them.
+/// subtree, and <see cref="IDrawContext2D.BeginClipBracket(in ClipBracket)"/> around a clipped one,
+/// whose depths are tracked apart from author state precisely so a per-node transform can be
+/// installed inside them.
 /// </para>
 /// <para>
 /// Traversal reads the tree and writes only to the context: it never mutates observable scene
@@ -57,7 +58,8 @@ public static class RenderTraverser
     /// Node-tier isolation happens inside the walk, one bracket per isolating node — see
     /// <see cref="Node2D.RequiresIsolation"/> — and nests inside the layer bracket. The M2 terms of
     /// §6.7's predicate, a mask, an effect, or a backdrop read, are not implemented and are not
-    /// approximated; the rectangular case of <c>Clip</c> is, and rides the same bracket.
+    /// approximated. The rectangular case of <c>Clip</c> is implemented, on a bracket of its own
+    /// that bounds without isolating.
     /// </para>
     /// </remarks>
     /// <exception cref="ArgumentNullException">
@@ -259,21 +261,28 @@ public static class RenderTraverser
     /// </summary>
     /// <remarks>
     /// <para>
-    /// The bracket opens <em>before</em> the node's own engine transform is installed and closes
-    /// after the last descendant, so the unit spans exactly the node's emitted content plus its
-    /// subtree — §6.7's compositing unit, no more and no less. Opening it discards the engine
-    /// transform the previous sibling left installed, which is why the transform is set after the
-    /// bracket rather than before it, and why a <see cref="Node2D.Clip"/> — stated in the node's
-    /// own local coordinates — travels into the bracket alongside the mapping it is read under.
-    /// That bracketing is exactly what a leaf-level
-    /// <see cref="IDrawContext2D.PushClip(in Rect)"/> cannot do: the clip bounds the subtree, and
-    /// no descendant can push its way back out of it.
+    /// A bracket opens <em>before</em> the node's own engine transform is installed and closes
+    /// after the last descendant, so it spans exactly the node's emitted content plus its subtree —
+    /// §6.7's compositing unit, no more and no less. Opening one discards the engine transform the
+    /// previous sibling left installed, which is why the transform is set after the bracket rather
+    /// than before it, and why a <see cref="Node2D.Clip"/> — stated in the node's own local
+    /// coordinates — travels into its bracket alongside the mapping it is read under. That
+    /// bracketing is exactly what a leaf-level <see cref="IDrawContext2D.PushClip(in Rect)"/>
+    /// cannot do: the clip bounds the subtree, and no descendant can push its way back out of it.
     /// </para>
     /// <para>
-    /// The overwhelmingly common node isolates nothing. <see cref="Node2D.RequiresIsolation"/> is a
-    /// field test, <see cref="UnitBracket"/> is a struct passed by reference, and a node at default
-    /// opacity and default blend therefore reaches its paint through exactly the calls it reached
-    /// them through before this existed.
+    /// A clip and an isolating unit are two brackets, not one, because §6.7's table says clip state
+    /// alone does not isolate: a clip-only node opens a <see cref="ClipBracket"/> and stages no
+    /// offscreen, so a descendant's non-default <see cref="Node2D.Blend"/> still composites against
+    /// what lies beneath the clipping node rather than against a scope the clip invented. A node
+    /// that does both opens the clip outside the unit, matching §6.7's semantic order, so the clip
+    /// bounds what the unit's group captures.
+    /// </para>
+    /// <para>
+    /// The overwhelmingly common node neither clips nor isolates.
+    /// <see cref="Node2D.RequiresIsolation"/> is a field test, both brackets are structs passed by
+    /// reference, and a node at default opacity, default blend, and no clip therefore reaches its
+    /// paint through exactly the calls it reached them through before this existed.
     /// </para>
     /// </remarks>
     private static void RenderNode(Node node, IDrawContext2D context, in Matrix3x2 layerBase)
@@ -290,13 +299,24 @@ public static class RenderTraverser
             ? spatial.WorldMatrix * layerBase
             : layerBase;
 
-        var isolates = spatial is not null && spatial.RequiresIsolation;
-        if (isolates)
+        // Clip outside unit, which is §6.7's semantic order — clip, then render node and children,
+        // then composite with opacity and blend — so the clip bounds what an isolating node's group
+        // captures rather than being applied inside it. A node that only clips opens only the clip
+        // bracket and stages no offscreen, because clip state alone does not isolate.
+        // Read once, so the bracket that closes is the bracket that opened however the tree is
+        // mutated mid-walk.
+        var clip = spatial?.Clip;
+        if (clip is { } bounds)
         {
             // The clip is stated in the node's local coordinates and the bracket opens before that
             // node's engine transform is installed, so the mapping it is read under travels with it.
-            context.BeginUnitBracket(
-                new UnitBracket(spatial!.Opacity, spatial.Blend, spatial.Clip, engineToDevice));
+            context.BeginClipBracket(new ClipBracket(bounds, engineToDevice));
+        }
+
+        var isolates = spatial is not null && spatial.RequiresIsolation;
+        if (isolates)
+        {
+            context.BeginUnitBracket(new UnitBracket(spatial!.Opacity, spatial.Blend));
         }
 
         context.SetEngineTransform(engineToDevice);
@@ -314,6 +334,10 @@ public static class RenderTraverser
         if (isolates)
         {
             context.EndUnitBracket();
+        }
+        if (clip is not null)
+        {
+            context.EndClipBracket();
         }
     }
 

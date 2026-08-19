@@ -416,6 +416,10 @@ public sealed class GradientRunTests
 
         public override void EndUnitBracket() => OtherCallCount++;
 
+        public override void BeginClipBracket(in ClipBracket bracket) => OtherCallCount++;
+
+        public override void EndClipBracket() => OtherCallCount++;
+
         public override void PushTransform(in Matrix3x2 localTransform) => OtherCallCount++;
 
         public override void PopTransform() => OtherCallCount++;

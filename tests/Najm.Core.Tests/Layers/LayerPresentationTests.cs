@@ -162,6 +162,14 @@ public sealed class LayerPresentationTests
         {
         }
 
+        public override void BeginClipBracket(in ClipBracket bracket)
+        {
+        }
+
+        public override void EndClipBracket()
+        {
+        }
+
         public override void PushTransform(in Matrix3x2 localTransform)
         {
         }

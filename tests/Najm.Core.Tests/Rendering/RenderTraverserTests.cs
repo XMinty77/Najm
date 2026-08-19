@@ -419,13 +419,17 @@ public sealed class RenderTraverserTests
         var faded = layer.Root.Add(new Node2D { Opacity = 0.5f });
         var blended = layer.Root.Add(new Node2D { Blend = BlendMode.Multiply });
         var forced = layer.Root.Add(new Node2D { Isolate = true });
+        var clipped = layer.Root.Add(new Node2D { Clip = new Rect(0f, 0f, 1f, 1f) });
         scene.Load(TestEnvironment.Stub());
 
         var context = new RecordingContext();
         scene.RenderDirect(context);
 
-        // Three isolating nodes among four, plus the layer's own root, which is a plain Node2D.
+        // Three isolating nodes among five, plus the layer's own root, which is a plain Node2D. The
+        // clipped one is not among them: §6.7's predicate is blend, mask, effect, backdrop, opacity
+        // below one, and Isolate — a clip bounds without isolating and gets its own bracket.
         Assert.HasCount(3, context.Units);
+        Assert.HasCount(1, context.Clips);
         Assert.AreEqual(new UnitBracket(0.5f, BlendMode.SrcOver), context.Units[0]);
         Assert.AreEqual(new UnitBracket(1f, BlendMode.Multiply), context.Units[1]);
         Assert.AreEqual(new UnitBracket(1f, BlendMode.SrcOver), context.Units[2]);
@@ -436,16 +440,21 @@ public sealed class RenderTraverserTests
         faded.Opacity = 1f;
         blended.Blend = BlendMode.SrcOver;
         forced.Isolate = false;
+        clipped.Clip = null;
         var quiet = new RecordingContext();
         scene.RenderDirect(quiet);
 
-        Assert.AreEqual(0, quiet.UnitCount, "Four default nodes must open nothing at all.");
+        Assert.AreEqual(0, quiet.UnitCount, "Five default nodes must open nothing at all.");
+        Assert.AreEqual(0, quiet.ClipCount);
         Assert.IsFalse(plain.Isolate);
     }
 
     [TestMethod]
-    public void AClipAloneOpensAUnitBracketCarryingTheRectAndTheMatrixItIsWrittenIn()
+    public void AClipAloneOpensAClipBracketAndNoUnitAtAll()
     {
+        // §6.7's table: clip state alone does not isolate. So a node whose only composition state is
+        // a clip asks for the bracket that bounds and never for the one that stages an offscreen.
+        //
         // The clip is stated in the node's local coordinates, and the bracket opens before that
         // node's engine transform is installed — opening one sheds whatever transform was there.
         // So the rectangle cannot travel alone: the mapping it is read under goes with it, and it is
@@ -462,31 +471,57 @@ public sealed class RenderTraverserTests
         var context = new RecordingContext(renderScale: 2f);
         scene.RenderDirect(context);
 
-        // Nothing but the clip is set, so this node isolates on the clip alone.
-        Assert.HasCount(1, context.Units);
-        Assert.AreEqual(1f, context.Units[0].Opacity);
-        Assert.AreEqual(BlendMode.SrcOver, context.Units[0].Blend);
-        Assert.AreEqual(new Rect(0f, 0f, 20f, 10f), context.Units[0].Clip);
+        Assert.AreEqual(0, context.UnitCount, "A clip must not isolate: no unit, no offscreen.");
+        Assert.HasCount(1, context.Clips);
+        Assert.AreEqual(new Rect(0f, 0f, 20f, 10f), context.Clips[0].Clip);
 
         // translate(7, 3) under a screen layer at render scale 2: scale 2 with the translation
         // doubled into device pixels.
         var expected = Matrix3x2.CreateTranslation(7f, 3f) * Matrix3x2.CreateScale(2f);
-        Assert.AreEqual(expected, context.Units[0].ClipToDevice);
-        Assert.AreEqual(new Vector2(14f, 6f), context.Units[0].ClipToDevice.Translation);
+        Assert.AreEqual(expected, context.Clips[0].ClipToDevice);
+        Assert.AreEqual(new Vector2(14f, 6f), context.Clips[0].ClipToDevice.Translation);
+        Assert.AreEqual(0, context.ClipDepth, "Every clip the walk opened must have closed.");
 
-        // Clearing it takes the node back off the isolating path, exactly as clearing an opacity
-        // does: the predicate is read per frame, never latched.
+        // Clearing it takes the node off the clipped path entirely: the state is read per frame,
+        // never latched.
         clipped.Clip = null;
         var quiet = new RecordingContext(renderScale: 2f);
         scene.RenderDirect(quiet);
 
+        Assert.AreEqual(0, quiet.ClipCount);
         Assert.AreEqual(0, quiet.UnitCount);
+    }
+
+    [TestMethod]
+    public void AClipThatAlsoIsolatesOpensTheClipOutsideTheUnit()
+    {
+        // §6.7's semantic order is clip → render node and children → composite with opacity and
+        // blend, so the clip has to be in force when the unit's group opens: it bounds what that
+        // group captures rather than being applied inside it. Two brackets, clip outermost, and the
+        // clip closes last.
+        var scene = new Scene();
+        var log = new RenderLog();
+        var layer = scene.Layers.Add(new ScreenLayer());
+        var group = layer.Root.Add(new LoggingDrawable("group", log));
+        group.Clip = new Rect(0f, 0f, 4f, 4f);
+        group.Opacity = 0.5f;
+        group.Add(new LoggingDrawable("child", log));
+        scene.Load(TestEnvironment.Stub());
+
+        var context = new RecordingContext();
+        scene.RenderDirect(context);
+
+        Assert.AreEqual(
+            "open1,engine,engine,clip+1,unit+1,engine,group,engine,child,unit-1,clip-1,engine,close1",
+            context.Events);
+        Assert.AreEqual(new UnitBracket(0.5f, BlendMode.SrcOver), context.Units[0]);
+        Assert.AreEqual(new Rect(0f, 0f, 4f, 4f), context.Clips[0].Clip);
     }
 
     [TestMethod]
     public void AClippedNodesBracketStillSpansItsWholeSubtree()
     {
-        // The point of putting the clip on the bracket rather than in each leaf's Render: it opens
+        // The point of putting the clip on a bracket rather than in each leaf's Render: it opens
         // before the node paints and closes after the last descendant, so it bounds the subtree.
         var scene = new Scene();
         var log = new RenderLog();
@@ -501,26 +536,27 @@ public sealed class RenderTraverserTests
         scene.RenderDirect(context);
 
         Assert.AreEqual(
-            "open1,engine,engine,unit+1,engine,group,engine,child,unit-1,engine,sibling,engine,close1",
+            "open1,engine,engine,clip+1,engine,group,engine,child,clip-1,engine,sibling,engine,close1",
             context.Events);
     }
 
     [TestMethod]
-    public void AUnitBracketRejectsANonFiniteClipMappingButIgnoresItWithoutAClip()
+    public void AClipBracketRejectsANonFiniteClipMappingAndCarriesTheRectItWasGiven()
     {
         var broken = new Matrix3x2(1f, 0f, 0f, float.NaN, 0f, 0f);
 
         var rejected = Assert.ThrowsExactly<ArgumentOutOfRangeException>(
-            () => _ = new UnitBracket(1f, BlendMode.SrcOver, new Rect(0f, 0f, 1f, 1f), broken));
+            () => _ = new ClipBracket(new Rect(0f, 0f, 1f, 1f), broken));
         Assert.AreEqual("clipToDevice", rejected.ParamName);
 
-        // With no clip the matrix has nothing to mean, so it is zeroed rather than validated: two
-        // brackets that clip nothing must compare equal however their caller reached them.
-        var unclipped = new UnitBracket(1f, BlendMode.SrcOver, null, broken);
+        var bracket = new ClipBracket(new Rect(1f, 2f, 3f, 4f), Matrix3x2.CreateScale(2f));
 
-        Assert.IsNull(unclipped.Clip);
-        Assert.AreEqual(default, unclipped.ClipToDevice);
-        Assert.AreEqual(new UnitBracket(1f, BlendMode.SrcOver), unclipped);
+        Assert.AreEqual(new Rect(1f, 2f, 3f, 4f), bracket.Clip);
+        Assert.AreEqual(Matrix3x2.CreateScale(2f), bracket.ClipToDevice);
+
+        // An empty rectangle is a legitimate thing to say — it hides the subtree — and is exactly
+        // what default(ClipBracket) says under the zero matrix.
+        Assert.AreEqual(default, new ClipBracket(default, default));
     }
 
     [TestMethod]
@@ -755,6 +791,12 @@ public sealed class RenderTraverserTests
         /// <summary>Gets how many engine unit brackets have been opened in total.</summary>
         internal int UnitCount { get; private set; }
 
+        /// <summary>Gets how many engine clip brackets are open right now.</summary>
+        internal int ClipDepth { get; private set; }
+
+        /// <summary>Gets how many engine clip brackets have been opened in total.</summary>
+        internal int ClipCount { get; private set; }
+
         public override void Clear(Color color)
         {
         }
@@ -801,6 +843,22 @@ public sealed class RenderTraverserTests
             UnitDepth--;
         }
 
+        public override void BeginClipBracket(in ClipBracket bracket)
+        {
+            ClipDepth++;
+            ClipCount++;
+        }
+
+        public override void EndClipBracket()
+        {
+            if (ClipDepth == 0)
+            {
+                throw new InvalidOperationException("No engine clip bracket is open.");
+            }
+
+            ClipDepth--;
+        }
+
         public override void PushTransform(in Matrix3x2 localTransform)
         {
         }
@@ -834,6 +892,7 @@ public sealed class RenderTraverserTests
     {
         private readonly List<LayerBracket> brackets = [];
         private readonly List<UnitBracket> units = [];
+        private readonly List<ClipBracket> clips = [];
         private readonly List<string> events = [];
 
         internal Matrix3x2 Engine { get; private set; }
@@ -843,6 +902,9 @@ public sealed class RenderTraverserTests
 
         /// <summary>Gets every unit bracket opened, in the order the traverser opened them.</summary>
         internal IReadOnlyList<UnitBracket> Units => units;
+
+        /// <summary>Gets every clip bracket opened, in the order the traverser opened them.</summary>
+        internal IReadOnlyList<ClipBracket> Clips => clips;
 
         /// <summary>Gets the interleaving of brackets, engine transforms, hooks, and node paints.</summary>
         internal string Events => string.Join(',', events);
@@ -879,6 +941,19 @@ public sealed class RenderTraverserTests
         {
             events.Add($"unit-{UnitDepth}");
             base.EndUnitBracket();
+        }
+
+        public override void BeginClipBracket(in ClipBracket bracket)
+        {
+            base.BeginClipBracket(bracket);
+            clips.Add(bracket);
+            events.Add($"clip+{ClipDepth}");
+        }
+
+        public override void EndClipBracket()
+        {
+            events.Add($"clip-{ClipDepth}");
+            base.EndClipBracket();
         }
     }
 

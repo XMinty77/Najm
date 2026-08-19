@@ -195,7 +195,7 @@ public class Node2D : Node
     /// </summary>
     /// <remarks>
     /// <para>
-    /// The clip brackets the unit exactly as <see cref="Opacity"/> does: it is opened before this
+    /// The clip brackets the same span <see cref="Opacity"/>'s group does: it is opened before this
     /// node paints and closed after the last descendant, so it bounds the subtree rather than the
     /// node. That is the difference between saying it here and pushing
     /// <see cref="IDrawContext2D.PushClip(in Rect)"/> inside each leaf's <c>Render</c> — a leaf can
@@ -210,8 +210,16 @@ public class Node2D : Node
     /// you mean, because an invisible node costs the walk nothing while a clipped one still walks.
     /// </para>
     /// <para>
-    /// Setting a clip makes the unit isolate, which costs an offscreen group for the subtree — see
-    /// §1.4's warning that composition brackets are fill-rate cost. The default of null is free.
+    /// <strong>A clip bounds without isolating.</strong> Per §6.7's table, clip state alone does not
+    /// isolate: a clipped node is not thereby a stacking scope, so a descendant carrying a
+    /// non-default <see cref="Blend"/> still composites against whatever lies beneath this node
+    /// rather than against the clipped subtree. Use <see cref="Isolate"/> when a scope is what you
+    /// want. The realization matches the semantics — a saved clip, never an offscreen group — so a
+    /// clip costs a clip-stack entry rather than the fill rate §1.4 warns composition brackets cost.
+    /// A node that clips <em>and</em> isolates gets both, with the clip bounding what the group
+    /// captures.
+    /// </para>
+    /// <para>
     /// Only a rectangle is expressible; path clips and <c>Mask</c> are M2 and are not approximated.
     /// </para>
     /// </remarks>
@@ -235,26 +243,21 @@ public class Node2D : Node
     /// <remarks>
     /// <para>
     /// §6.7's isolation predicate, restricted to the M1 property set: a unit isolates when its
-    /// opacity is below one, its blend is not the default, a <see cref="Clip"/> is set, or
-    /// <see cref="Isolate"/> is set. The full predicate also isolates on a mask, an effect, or a
-    /// backdrop, and those terms arrive with the properties themselves rather than as unreachable
-    /// code here.
+    /// opacity is below one, its blend is not the default, or <see cref="Isolate"/> is set. The full
+    /// predicate also isolates on a mask, an effect, or a backdrop, and those terms arrive with the
+    /// properties themselves rather than as unreachable code here.
     /// </para>
     /// <para>
-    /// <strong>Clip is in this list and §6.7's table says it need not be.</strong> The table's
-    /// "clip state alone does not isolate" describes a realization that clips with a plain save and
-    /// restore, leaving a descendant's non-default <see cref="Blend"/> to composite against
-    /// whatever lies outside the clipped node. Najm brackets it as a unit instead, so a clip is one
-    /// mechanism with opacity and blend rather than a second, parallel one — the price is an
-    /// offscreen group where the reference would have taken a clip stack entry, and the visible
-    /// consequence is that a clipped subtree is a stacking scope, so a descendant's non-default
-    /// blend composites against the clipped unit rather than past it. A deliberate departure, and
-    /// one the deviation register owns.
+    /// <strong><see cref="Clip"/> is deliberately absent</strong>, because §6.7's table says clip
+    /// state alone does not isolate. A clip bounds the subtree through a bracket of its own — a
+    /// saved clip, no offscreen — so a clipped node is not a stacking scope and a descendant's
+    /// non-default <see cref="Blend"/> composites past it. Adding it here would be both a semantic
+    /// change and an offscreen nobody asked for.
     /// </para>
     /// <para>
-    /// This is the render walk's per-node fast path, so it is four field reads and no branching
+    /// This is the render walk's per-node fast path, so it is three field reads and no branching
     /// into anything that allocates. The overwhelmingly common node — default opacity, default
-    /// blend, no clip, no forced isolation — answers <see langword="false"/> and costs the walk nothing
+    /// blend, no forced isolation — answers <see langword="false"/> and costs the walk nothing
     /// beyond the test itself. §6.7's <c>CompositionAtomicity.SinglePrimitive</c> exemption, which
     /// would let a verified single-primitive node fold its opacity into its own paint instead of
     /// bracketing, is deliberately absent: without the verification it would silently give custom
@@ -262,7 +265,7 @@ public class Node2D : Node
     /// </para>
     /// </remarks>
     internal bool RequiresIsolation =>
-        opacity < 1f || blend != BlendMode.SrcOver || Clip is not null || Isolate;
+        opacity < 1f || blend != BlendMode.SrcOver || Isolate;
 
     internal override int PaintOrderKey => zIndex;
 

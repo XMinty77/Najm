@@ -134,6 +134,12 @@ public abstract class DrawContext2DBase : IDrawContext2D
     public abstract void EndUnitBracket();
 
     /// <inheritdoc />
+    public abstract void BeginClipBracket(in ClipBracket bracket);
+
+    /// <inheritdoc />
+    public abstract void EndClipBracket();
+
+    /// <inheritdoc />
     public abstract void PushTransform(in Matrix3x2 localTransform);
 
     /// <inheritdoc />

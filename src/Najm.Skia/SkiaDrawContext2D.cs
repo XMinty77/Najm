@@ -36,8 +36,8 @@ namespace Najm.Skia;
 /// the path retains its native storage for allocation-free drawing at a stable command count.
 /// State pushes share one strict typed LIFO stack and are balanced automatically when the owning
 /// target is disposed. Engine brackets — layer brackets around a whole layer, unit brackets around
-/// one isolating node's subtree — share a second typed LIFO stack of their own, apart from author
-/// state: the engine installs its per-node transforms inside them, which author state may never
+/// one isolating node's subtree, clip brackets around one clipped node's subtree — share a second
+/// typed LIFO stack of their own, apart from author state: the engine installs its per-node transforms inside them, which author state may never
 /// allow. The native objects Skia forces us to allocate for brushes and dashes live in
 /// context-owned caches keyed by the portable descriptor <em>value</em>: the first appearance of a
 /// gradient or dash allocates, every repetition is a dictionary hit that allocates nothing, and the
@@ -95,10 +95,18 @@ public sealed class SkiaDrawContext2D : DrawContext2DBase
 
     /// <summary>
     /// Native save slots one engine unit bracket occupies: the group layer alone. A node has no
-    /// target of its own to clear, and its clip is intersected inside the group layer's own slot
-    /// rather than beneath it, so it needs no second slot however it is configured.
+    /// target of its own to clear, and no clip of its own to hold — a clipped node opens a clip
+    /// bracket outside this one — so it needs no second slot however it is configured.
     /// </summary>
     private const int SaveSlotsPerUnitBracket = 1;
+
+    /// <summary>
+    /// Native save slots one engine clip bracket occupies: a plain save holding the clip. The same
+    /// count as a unit for an entirely different reason — a unit spends its slot on a
+    /// <c>SaveLayer</c> and this one spends it on a <c>ClipRect</c>, which is the whole difference
+    /// between isolating a subtree and merely bounding it.
+    /// </summary>
+    private const int SaveSlotsPerClipBracket = 1;
 
     private static readonly SKSamplingOptions LinearSampling = new(
         SKFilterMode.Linear,
@@ -345,12 +353,10 @@ public sealed class SkiaDrawContext2D : DrawContext2DBase
     /// by that viewport rather than by the whole surface.
     /// </para>
     /// <para>
-    /// A <see cref="UnitBracket.Clip"/> is intersected <em>inside</em> that layer's save slot rather
-    /// than in a slot of its own, so one restore still closes the whole bracket. The consequence is
-    /// that the offscreen is sized by the clip that was active when the bracket opened rather than
-    /// by the node's own clip — the same conservative trade the missing bounds hint already makes,
-    /// costing fill rate and never correctness, since every pixel the tighter layer would hold is
-    /// inside the wider one and the clip still bounds what reaches it.
+    /// A clipped node's clip is not applied here. It is a bracket of its own — see
+    /// <see cref="BeginClipBracket(in ClipBracket)"/> — opened outside this one, which both keeps a
+    /// clip-only node off this offscreen entirely and means the clip is already in force at the
+    /// <c>SaveLayer</c>, so it bounds and sizes what the group captures.
     /// </para>
     /// </remarks>
     public override void BeginUnitBracket(in UnitBracket bracket)
@@ -375,21 +381,6 @@ public sealed class SkiaDrawContext2D : DrawContext2DBase
 
             StampColor(new UtilsColor(1f, 1f, 1f, bracket.Opacity), blendMode);
             canvas.SaveLayer(nativePaint);
-            if (bracket.Clip is { } clip)
-            {
-                // Inside the layer's own save slot, so the single restore that closes the bracket
-                // takes the clip with it and no second slot is needed. The clip is applied under
-                // the node's engine transform — the mapping its local rectangle is written in —
-                // and the matrix is put back afterwards, because the caller installs its own next.
-                var baselineMatrix = canvas.TotalMatrix;
-                canvas.Concat(ToSkiaMatrix(bracket.ClipToDevice * deviceOffset));
-                canvas.ClipRect(
-                    SKRect.Create(clip.X, clip.Y, clip.Width, clip.Height),
-                    SKClipOperation.Intersect,
-                    antialias: true);
-                canvas.SetMatrix(baselineMatrix);
-            }
-
             engineSlotBaseline += SaveSlotsPerUnitBracket;
             bracketStack[engineBracketDepth++] = BracketKind.Unit;
         }
@@ -409,13 +400,84 @@ public sealed class SkiaDrawContext2D : DrawContext2DBase
     /// <inheritdoc />
     public override void EndUnitBracket() => EndBracket(BracketKind.Unit);
 
+    /// <inheritdoc />
+    /// <remarks>
+    /// <para>
+    /// One native save slot realizes a clip, below the engine transform's own slot, and it holds a
+    /// <c>ClipRect</c> and nothing else. <strong>No <c>SaveLayer</c> is taken</strong>, which is the
+    /// point of the bracket rather than an optimization inside it: §6.7's table says clip state
+    /// alone does not isolate, so a clipped subtree must stay in whatever compositing scope it was
+    /// already in. An offscreen here would silently make it a scope of its own and change what a
+    /// descendant's non-default blend composites against, on top of costing a group nothing reads.
+    /// </para>
+    /// <para>
+    /// The rectangle is intersected under the node's engine transform — the mapping its local
+    /// coordinates are written in, so a rotated clip stays the rotated rectangle rather than
+    /// collapsing to its device bound — and the matrix is put back afterwards, because a Skia clip
+    /// is stored in device space and the caller installs its own transform next.
+    /// </para>
+    /// <para>
+    /// Antialiased, matching author <see cref="PushClip(in Rect)"/>: a subtree bounded at a
+    /// fractional device edge should feather exactly as a leaf clipped there would.
+    /// </para>
+    /// </remarks>
+    public override void BeginClipBracket(in ClipBracket bracket)
+    {
+        EnsureActive();
+        if (stateDepth != 0)
+        {
+            throw new InvalidOperationException(
+                $"Cannot open a clip bracket while {stateDepth} unbalanced context state push(es) remain ({DescribeStack()}); author state must be balanced within Render.");
+        }
+
+        // Grown before the canvas moves, so a resize cannot fail over a half-open bracket.
+        EnsureBracketCapacity();
+        try
+        {
+            if (canvas.SaveCount > engineSlotBaseline)
+            {
+                canvas.RestoreToCount(engineSlotBaseline);
+            }
+
+            canvas.Save();
+            var baselineMatrix = canvas.TotalMatrix;
+            canvas.Concat(ToSkiaMatrix(bracket.ClipToDevice * deviceOffset));
+            canvas.ClipRect(
+                SKRect.Create(
+                    bracket.Clip.X,
+                    bracket.Clip.Y,
+                    bracket.Clip.Width,
+                    bracket.Clip.Height),
+                SKClipOperation.Intersect,
+                antialias: true);
+            canvas.SetMatrix(baselineMatrix);
+
+            engineSlotBaseline += SaveSlotsPerClipBracket;
+            bracketStack[engineBracketDepth++] = BracketKind.Clip;
+        }
+        catch
+        {
+            // Back to where a clean open would have started: the clip's slot is gone and so is the
+            // engine transform the open shed, which the caller reinstalls either way.
+            if (canvas.SaveCount > engineSlotBaseline)
+            {
+                canvas.RestoreToCount(engineSlotBaseline);
+            }
+
+            throw;
+        }
+    }
+
+    /// <inheritdoc />
+    public override void EndClipBracket() => EndBracket(BracketKind.Clip);
+
     /// <summary>
     /// Closes the innermost engine bracket, which must be of <paramref name="expected"/> kind.
     /// </summary>
     /// <remarks>
-    /// Layer and unit brackets share one last-in-first-out order because they share the canvas save
-    /// stack, so closing them out of order would restore another bracket's slots. The kind check
-    /// turns that into a named error rather than a silently wrong frame.
+    /// Layer, unit, and clip brackets share one last-in-first-out order because they share the
+    /// canvas save stack, so closing them out of order would restore another bracket's slots. The
+    /// kind check turns that into a named error rather than a silently wrong frame.
     /// </remarks>
     private void EndBracket(BracketKind expected)
     {
@@ -631,22 +693,27 @@ public sealed class SkiaDrawContext2D : DrawContext2DBase
         var unbalancedStateCount = stateDepth;
         var unbalancedLayerCount = CountBrackets(BracketKind.Layer);
         var unbalancedUnitCount = CountBrackets(BracketKind.Unit);
+        var unbalancedClipCount = CountBrackets(BracketKind.Clip);
         ResetToBaseline();
-        if (unbalancedStateCount != 0 || unbalancedLayerCount != 0 || unbalancedUnitCount != 0)
+        if (unbalancedStateCount != 0 ||
+            unbalancedLayerCount != 0 ||
+            unbalancedUnitCount != 0 ||
+            unbalancedClipCount != 0)
         {
             throw new InvalidOperationException(
-                $"The render pass ended with {DescribeImbalance(unbalancedStateCount, unbalancedLayerCount, unbalancedUnitCount)}; baseline state was restored.");
+                $"The render pass ended with {DescribeImbalance(unbalancedStateCount, unbalancedLayerCount, unbalancedUnitCount, unbalancedClipCount)}; baseline state was restored.");
         }
     }
 
     /// <summary>
-    /// Names what a pass ended holding. Author pushes, layer brackets, and unit brackets are counted
+    /// Names what a pass ended holding. Author pushes and each engine bracket kind are counted
     /// separately because they are owned by different callers — the author, the layer walk, and the
-    /// node walk — and a fix for one is not a fix for another.
+    /// node walk's two brackets — and a fix for one is not a fix for another. A clipped node and an
+    /// isolating one leak differently and are told apart here rather than in a debugger.
     /// </summary>
-    private static string DescribeImbalance(int stateCount, int layerCount, int unitCount)
+    private static string DescribeImbalance(int stateCount, int layerCount, int unitCount, int clipCount)
     {
-        var parts = new List<string>(3);
+        var parts = new List<string>(4);
         if (stateCount != 0)
         {
             parts.Add($"{stateCount} unbalanced context state push(es)");
@@ -658,6 +725,10 @@ public sealed class SkiaDrawContext2D : DrawContext2DBase
         if (unitCount != 0)
         {
             parts.Add($"{unitCount} unbalanced engine unit bracket(s)");
+        }
+        if (clipCount != 0)
+        {
+            parts.Add($"{clipCount} unbalanced engine clip bracket(s)");
         }
 
         return parts.Count switch
@@ -1088,6 +1159,7 @@ public sealed class SkiaDrawContext2D : DrawContext2DBase
     {
         BracketKind.Layer => "layer",
         BracketKind.Unit => "unit",
+        BracketKind.Clip => "clip",
         _ => "unknown",
     };
 
@@ -1095,6 +1167,7 @@ public sealed class SkiaDrawContext2D : DrawContext2DBase
     {
         BracketKind.Layer => SaveSlotsPerLayerBracket,
         BracketKind.Unit => SaveSlotsPerUnitBracket,
+        BracketKind.Clip => SaveSlotsPerClipBracket,
         _ => throw new ArgumentOutOfRangeException(nameof(kind), "The engine bracket kind is not supported."),
     };
 
@@ -1114,5 +1187,6 @@ public sealed class SkiaDrawContext2D : DrawContext2DBase
         None,
         Layer,
         Unit,
+        Clip,
     }
 }

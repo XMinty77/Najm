@@ -303,12 +303,14 @@ public sealed class NodeCompositionTests
     {
         var scene = new Scene { VirtualResolution = new Vector2(8f, 4f) };
         var layer = scene.Layers.Add(new ScreenLayer { ClearColor = OpaqueBlack });
-        var group = layer.Root.Add(new Node2D { Opacity = 0.5f });
+        var group = layer.Root.Add(new Node2D { Opacity = 0.5f, Clip = new Rect(0f, 0f, 6f, 3f) });
         var first = group.Add(new RectDrawable(new Rect(0f, 0f, 4f, 3f), OpaqueRed));
         var second = group.Add(new RectDrawable(new Rect(2f, 1f, 4f, 3f), OpaqueGreen));
         second.Blend = BlendMode.Screen;
         var forced = layer.Root.Add(new RectDrawable(new Rect(5f, 0f, 2f, 2f), OpaqueBlue));
         forced.Isolate = true;
+        var bounded = layer.Root.Add(new RectDrawable(new Rect(1f, 2f, 3f, 2f), OpaqueCyan));
+        bounded.Clip = new Rect(1f, 2f, 2f, 1f);
 
         using var provider = new RasterSkiaSurfaceProvider();
         scene.Load(new SceneEnvironment(provider));
@@ -321,15 +323,19 @@ public sealed class NodeCompositionTests
             scene.RenderDirect(context);
         }
 
-        // Three unit brackets a frame, each a native SaveLayer and its restore. None of that may
-        // cost the managed heap anything: the bracket is a struct passed by reference, its paint is
-        // the context's own, and its save-slot bookkeeping is a byte written to a preallocated stack.
+        // Three unit brackets a frame, each a native SaveLayer and its restore, and two clip
+        // brackets, each a save and a ClipRect. None of that may cost the managed heap anything:
+        // a bracket is a struct passed by reference, its paint is the context's own, its rectangle
+        // rides the struct, and its save-slot bookkeeping is a byte written to a preallocated stack.
+        // Reading Node2D.Clip on the walk is a nullable field read and must not box either.
         var reading = AllocationProbe.AssertNoneAllocated(
             2_000,
             () => scene.RenderDirect(context),
-            "The warm direct-path render loop over isolating nodes");
+            "The warm direct-path render loop over isolating and clipped nodes");
 
-        Assert.AreEqual((64 + reading.Invocations) * 3, first.Draws + second.Draws + forced.Draws);
+        Assert.AreEqual(
+            (64 + reading.Invocations) * 4,
+            first.Draws + second.Draws + forced.Draws + bounded.Draws);
         target.EndPass();
     }
 
@@ -397,9 +403,10 @@ public sealed class NodeCompositionTests
         //
         // Pixel 1 is the load-bearing one twice over. It is inside the clip, so it survives; and it
         // is the pixel where the two children overlap, so its red channel is 0 only if the children
-        // composited among themselves before the group alpha applied. A clip that opened a second,
-        // separate bracket around the subtree would still produce the right silhouette here and the
-        // wrong overlap — one unit is the claim, and this is the pixel that checks it.
+        // composited among themselves before the group alpha applied. The clip and the opacity are
+        // two brackets — the clip bounds, the unit isolates — and this pixel is where a clip that
+        // had somehow split the unit in two would show the wrong overlap while still producing the
+        // right silhouette.
         const string RedAtOneFifth = "330000ff";
         const string GreenAtOneFifth = "003300ff";
         var expected = RedAtOneFifth + GreenAtOneFifth + Black + Black;
@@ -426,6 +433,194 @@ public sealed class NodeCompositionTests
             frames.Direct[4],
             "The overlap must carry no red: a clipped unit is still one unit, and its children "
                 + "composite among themselves before the group alpha applies.");
+    }
+
+    [TestMethod]
+    public void AClipOnlyAncestorIsNotAStackingScopeForADescendantBlend()
+    {
+        // §6.7's table, in pixels: "clip state alone does not isolate". This is the frame that tells
+        // the two readings apart, and it is the one the isolating-clip implementation got wrong.
+        //
+        // 4×1 virtual on a 4×1 target: renderScale 1, virtual units are pixels. An opaque-black
+        // backdrop layer under a layer with a transparent clear holding, in paint order:
+        //   an opaque orange (255,128,0) over x ∈ [0,4);
+        //   a group node whose ONLY composition state is Clip = (0,0,3,1) ⇒ device x ∈ [0,3);
+        //   under the group, an opaque cyan (128,255,255) over x ∈ [1,4) with Blend = Multiply.
+        //
+        // CORRECT — the clip bounds the subtree and isolates nothing, so the descendant's multiply
+        // composites against what lies beneath the clipping node, which is the orange:
+        //   x=0 — no cyan: orange (255,128,0).
+        //   x=1 — multiply against opaque orange, per channel: (255·128, 128·255, 0·255)/255
+        //         = (128,128,0).
+        //   x=2 — the same: (128,128,0).
+        //   x=3 — outside the clip, so the cyan never lands: orange (255,128,0).
+        //
+        // WRONG — the clip opens an isolating unit, so the group is a stacking scope and the
+        // multiply sees the unit's transparent interior instead. Separable multiply is
+        // (1−αs)·d + (1−αd)·s + s·d, and with d = 0 and αd = 0 that is s, so the unit holds opaque
+        // cyan; the unit then merges over the orange source-over at full alpha and the cyan simply
+        // wins:
+        //   x=0 — orange (255,128,0); x∈{1,2} — cyan (128,255,255); x=3 — orange (255,128,0).
+        //
+        // The two readings differ on the blue channel of x=1 by the whole range: 0 against 255.
+        const string Orange = "ff8000ff";
+        const string OrangeTimesCyan = "808000ff";
+        const string Cyan = "80ffffff";
+        var whenClipBoundsOnly = Orange + OrangeTimesCyan + OrangeTimesCyan + Orange;
+        var whenClipIsolates = Orange + Cyan + Cyan + Orange;
+
+        var scene = new Scene { VirtualResolution = new Vector2(4f, 1f) };
+        scene.Layers.Add(new ScreenLayer { ClearColor = OpaqueBlack });
+        var layer = scene.Layers.Add(new ScreenLayer());
+        layer.Root.Add(new RectDrawable(new Rect(0f, 0f, 4f, 1f), OpaqueOrange));
+        var group = layer.Root.Add(new Node2D { Clip = new Rect(0f, 0f, 3f, 1f) });
+        var multiplied = group.Add(new RectDrawable(new Rect(1f, 0f, 3f, 1f), OpaqueCyan));
+        multiplied.Blend = BlendMode.Multiply;
+
+        using var provider = new RasterSkiaSurfaceProvider();
+        scene.Load(new SceneEnvironment(provider));
+        var frames = RenderBothWays(scene, provider, 4, 1);
+
+        Assert.AreEqual(whenClipBoundsOnly, Hex(frames.Direct));
+        Assert.AreNotEqual(whenClipIsolates, Hex(frames.Direct));
+        CollectionAssert.AreEqual(
+            frames.Composited,
+            frames.Direct,
+            "A clip must reach the frame the same way on both paths.");
+
+        // Named as the single byte that separates the readings, so a regression to an isolating
+        // clip reports itself rather than arriving as a wall of hex.
+        Assert.AreEqual(
+            0,
+            frames.Direct[6],
+            "The blend must have multiplied against the orange beneath the clipping node: a clip "
+                + "bounds a subtree, it does not give it a scope of its own.");
+
+        // And the clip really is clipping, rather than the cyan happening to stop at x = 3: without
+        // it the multiply reaches the fourth pixel too.
+        group.Clip = null;
+        var unclipped = RenderBothWays(scene, provider, 4, 1);
+
+        Assert.AreEqual(Orange + OrangeTimesCyan + OrangeTimesCyan + OrangeTimesCyan, Hex(unclipped.Direct));
+        CollectionAssert.AreEqual(unclipped.Composited, unclipped.Direct);
+
+        // The scope a clip must not invent is exactly the one Isolate exists to ask for. Same tree,
+        // same clip, one flag: the frame becomes the isolated arithmetic derived above, which is
+        // the reading the old clip-isolates predicate produced for every clipped node whether or
+        // not its author wanted a scope.
+        group.Clip = new Rect(0f, 0f, 3f, 1f);
+        group.Isolate = true;
+        var isolated = RenderBothWays(scene, provider, 4, 1);
+
+        Assert.AreEqual(whenClipIsolates, Hex(isolated.Direct));
+        CollectionAssert.AreEqual(isolated.Composited, isolated.Direct);
+    }
+
+    [TestMethod]
+    public void AClipOnlyNodeOpensNoUnitBracketAndSoStagesNoOffscreen()
+    {
+        // The structural half of the claim above, and the cost half of it: a clip is a saved clip,
+        // never a SaveLayer. Counting what the walk asks the context for is the observation that
+        // does not depend on the pixels agreeing by luck.
+        var scene = new Scene { VirtualResolution = new Vector2(4f, 1f) };
+        var layer = scene.Layers.Add(new ScreenLayer { ClearColor = OpaqueBlack });
+        var group = layer.Root.Add(new Node2D { Clip = new Rect(0f, 0f, 2f, 1f) });
+        group.Add(new RectDrawable(new Rect(0f, 0f, 4f, 1f), OpaqueRed));
+
+        using var provider = new RasterSkiaSurfaceProvider();
+        scene.Load(new SceneEnvironment(provider));
+
+        var clipOnly = new UnitCountingContext();
+        scene.RenderDirect(clipOnly);
+
+        Assert.AreEqual(1, clipOnly.ClipBracketCount, "A clipped subtree must be bracketed.");
+        Assert.AreEqual(
+            0,
+            clipOnly.UnitBracketCount,
+            "Clip state alone does not isolate, so it must not open a unit or its offscreen.");
+
+        // Add something that genuinely isolates and both brackets appear, the clip outside the unit
+        // so that it bounds what the group captures.
+        group.Opacity = 0.5f;
+        var clipAndOpacity = new UnitCountingContext();
+        scene.RenderDirect(clipAndOpacity);
+
+        Assert.AreEqual(1, clipAndOpacity.ClipBracketCount);
+        Assert.AreEqual(1, clipAndOpacity.UnitBracketCount);
+
+        // Drop both and the node is back on the free path: nothing is asked for at all.
+        group.Opacity = 1f;
+        group.Clip = null;
+        var plain = new UnitCountingContext();
+        scene.RenderDirect(plain);
+
+        Assert.AreEqual(0, plain.ClipBracketCount);
+        Assert.AreEqual(0, plain.UnitBracketCount);
+    }
+
+    [TestMethod]
+    public void AClipBoundsWhatAnOpacityGroupCaptures_RatherThanEachPrimitiveInsideIt()
+    {
+        // §6.7's semantic order is clip → render node and children → composite with opacity and
+        // blend, so a node that clips and isolates applies its clip OUTSIDE the group. The two
+        // orderings agree wherever clip coverage is 0 or 1 — every mode in Najm's portable blend
+        // subset is the identity for a transparent source — so the frame that separates them puts
+        // the clip edge inside a pixel and two overlapping children across it.
+        //
+        // 4×1 at renderScale 1, opaque-black backdrop. A group at Opacity 0.2 with
+        // Clip = (0,0,2.5,1) ⇒ device x ∈ [0,2.5), holding an opaque red over x ∈ [0,3) and an
+        // opaque green over x ∈ [1,3). Pixel 2 is half covered by the clip; the antialiased clip
+        // gives it coverage 0.5.
+        //
+        // RIGHT ORDER — clip outside the group. The children composite among themselves at full
+        // alpha, so the group's content at x=2 is opaque green; the group merges at 0.2 through a
+        // clip of coverage 0.5, i.e. at 0.1: (0, 0.1·255, 0) = (0, 25.5, 0) over black.
+        //
+        // WRONG ORDER — clip inside the group, applied to each primitive as it lands. Red arrives at
+        // coverage 0.5: premultiplied (127.5, 0, 0) at α = 0.5. Green arrives at coverage 0.5 over
+        // it: (0, 127.5, 0) + (1 − 0.5)·(127.5, 0, 0) = (63.75, 127.5, 0) at α = 0.75. Merging that
+        // at 0.2 over black gives (12.75, 25.5, 0) — the same green, plus red that has no business
+        // being there. It is the per-primitive artifact group opacity exists to prevent, arriving
+        // through the clip instead.
+        //
+        // So the red channel of pixel 2 is the whole difference: 0 for the right order, 13 for the
+        // wrong one.
+        var scene = new Scene { VirtualResolution = new Vector2(4f, 1f) };
+        scene.Layers.Add(new ScreenLayer { ClearColor = OpaqueBlack });
+        var layer = scene.Layers.Add(new ScreenLayer());
+        var group = layer.Root.Add(new Node2D
+        {
+            Opacity = 0.2f,
+            Clip = new Rect(0f, 0f, 2.5f, 1f),
+        });
+        group.Add(new RectDrawable(new Rect(0f, 0f, 3f, 1f), OpaqueRed));
+        group.Add(new RectDrawable(new Rect(1f, 0f, 2f, 1f), OpaqueGreen));
+
+        using var provider = new RasterSkiaSurfaceProvider();
+        scene.Load(new SceneEnvironment(provider));
+        var frames = RenderBothWays(scene, provider, 4, 1);
+
+        // The fully covered pixels first: 0.2·255 = 51 = 0x33, red at x=0 and green at x∈{1}, and
+        // nothing at all beyond the clip.
+        const string RedAtOneFifth = "330000ff";
+        const string GreenAtOneFifth = "003300ff";
+        Assert.AreEqual(RedAtOneFifth, Hex(frames.Direct)[..8]);
+        Assert.AreEqual(GreenAtOneFifth, Hex(frames.Direct)[8..16]);
+        Assert.AreEqual(Black, Hex(frames.Direct)[24..]);
+
+        // Then the half-covered one, which is the ordering itself.
+        Assert.AreEqual(
+            0,
+            frames.Direct[8],
+            "Pixel 2 must carry no red: the clip bounds what the group captures, so the covered "
+                + "child cannot leak through the clip edge one primitive at a time.");
+        Assert.AreEqual(26, frames.Direct[9], "0.5 clip coverage × 0.2 group alpha × 255 = 25.5.");
+        Assert.AreEqual(0, frames.Direct[10]);
+
+        CollectionAssert.AreEqual(
+            frames.Composited,
+            frames.Direct,
+            "A clipped group must reach the frame the same way on both paths.");
     }
 
     [TestMethod]
@@ -488,7 +683,7 @@ public sealed class NodeCompositionTests
     }
 
     [TestMethod]
-    public void EngineBracketsOfBothKindsMustCloseInTheOrderTheyWereOpened()
+    public void EngineBracketsOfEveryKindMustCloseInTheOrderTheyWereOpened()
     {
         // They share the canvas save stack, so closing them out of order would restore another
         // bracket's slots. The kind check makes that a named error instead of a silently wrong frame.
@@ -508,9 +703,23 @@ public sealed class NodeCompositionTests
         var alsoCrossed = Assert.ThrowsExactly<InvalidOperationException>(context.EndUnitBracket);
         StringAssert.Contains(alsoCrossed.Message, "more recently opened engine layer bracket");
 
+        // The third kind is in the same order and names itself the same way. The traverser opens a
+        // clip outside a unit, so this is exactly the nesting a clipped isolating node produces.
+        context.BeginClipBracket(new ClipBracket(new Rect(0f, 0f, 2f, 2f), Matrix3x2.Identity));
+        context.BeginUnitBracket(new UnitBracket(0.5f, BlendMode.SrcOver));
+        var clipCrossed = Assert.ThrowsExactly<InvalidOperationException>(context.EndClipBracket);
+        StringAssert.Contains(clipCrossed.Message, "more recently opened engine unit bracket");
+
+        context.EndUnitBracket();
+        var unitOverClip = Assert.ThrowsExactly<InvalidOperationException>(context.EndUnitBracket);
+        StringAssert.Contains(unitOverClip.Message, "more recently opened engine clip bracket");
+        context.EndClipBracket();
+
         context.EndLayerBracket();
         var unopened = Assert.ThrowsExactly<InvalidOperationException>(context.EndUnitBracket);
         StringAssert.Contains(unopened.Message, "no engine unit bracket is open");
+        var noClip = Assert.ThrowsExactly<InvalidOperationException>(context.EndClipBracket);
+        StringAssert.Contains(noClip.Message, "no engine clip bracket is open");
         target.EndPass();
     }
 
@@ -528,10 +737,12 @@ public sealed class NodeCompositionTests
         StringAssert.Contains(units.Message, "2 unbalanced engine unit bracket(s)");
         StringAssert.Contains(units.Message, "baseline state was restored");
 
-        // Restored means restored, and all three kinds are named separately, because they are owned
-        // by three different callers and a fix for one is not a fix for another.
+        // Restored means restored, and every kind is named separately, because they are owned by
+        // different callers — the author, the layer walk, and the node walk's two brackets — and a
+        // fix for one is not a fix for another.
         context = target.GetContext();
         context.BeginLayerBracket(new LayerBracket(OpaqueRed, 1f, BlendMode.SrcOver, null));
+        context.BeginClipBracket(new ClipBracket(new Rect(0f, 0f, 2f, 2f), Matrix3x2.Identity));
         context.BeginUnitBracket(new UnitBracket(0.5f, BlendMode.SrcOver));
         context.PushClip(new Rect(0f, 0f, 1f, 1f));
 
@@ -539,6 +750,7 @@ public sealed class NodeCompositionTests
         StringAssert.Contains(all.Message, "1 unbalanced context state push(es)");
         StringAssert.Contains(all.Message, "1 unbalanced engine layer bracket(s)");
         StringAssert.Contains(all.Message, "1 unbalanced engine unit bracket(s)");
+        StringAssert.Contains(all.Message, "1 unbalanced engine clip bracket(s)");
 
         context = target.GetContext();
         target.EndPass();
@@ -665,10 +877,13 @@ public sealed class NodeCompositionTests
         }
     }
 
-    /// <summary>Counts the unit brackets a walk asks for, and does nothing else.</summary>
+    /// <summary>Counts the engine brackets a walk asks for, by kind, and does nothing else.</summary>
     private sealed class UnitCountingContext : DrawContext2DBase
     {
         internal int UnitBracketCount { get; private set; }
+
+        /// <summary>Gets how many clip brackets the walk asked for.</summary>
+        internal int ClipBracketCount { get; private set; }
 
         public override SurfaceSpec SurfaceSpec { get; } = new(4, 1);
 
@@ -708,6 +923,12 @@ public sealed class NodeCompositionTests
         public override void BeginUnitBracket(in UnitBracket bracket) => UnitBracketCount++;
 
         public override void EndUnitBracket()
+        {
+        }
+
+        public override void BeginClipBracket(in ClipBracket bracket) => ClipBracketCount++;
+
+        public override void EndClipBracket()
         {
         }
 
