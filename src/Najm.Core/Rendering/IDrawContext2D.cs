@@ -117,6 +117,114 @@ public interface IDrawContext2D
     /// <remarks>Fewer than two points describe no contour and paint nothing.</remarks>
     void DrawPolyline(ReadOnlySpan<Vector2> points, in Paint paint, bool close = false);
 
+    /// <summary>
+    /// Strokes a run of straight segments whose color and width vary along its length.
+    /// </summary>
+    /// <param name="points">The finite local-unit vertices, in order; the span is not retained.</param>
+    /// <param name="vertexColors">
+    /// One color per vertex, or an empty span to take the color or brush of
+    /// <paramref name="template"/> for the whole run. The span is not retained.
+    /// </param>
+    /// <param name="vertexWidths">
+    /// One finite nonnegative local-unit stroke width per vertex, or an empty span to take
+    /// <see cref="Paint.StrokeWidth"/> from <paramref name="template"/> for the whole run. The span
+    /// is not retained.
+    /// </param>
+    /// <param name="template">
+    /// The stroke this run is painted with. Its <see cref="Paint.Cap"/>, <see cref="Paint.Join"/>,
+    /// <see cref="Paint.MiterLimit"/>, <see cref="Paint.Dash"/>, <see cref="Paint.BlendMode"/>, and
+    /// <see cref="Paint.IsAntialias"/> apply to the whole run; its color and width are the fallback
+    /// for whichever ramp is empty. <see cref="Paint.Style"/> is not read — a run is always stroked.
+    /// </param>
+    /// <param name="close">Whether to close the run back to its first vertex.</param>
+    /// <remarks>
+    /// See <see cref="DrawGradientSpline"/> for the shared contract: how a per-vertex ramp becomes
+    /// per-segment paint, what happens at the joins, and why this is a Tier-2 convenience rather
+    /// than the batch primitive it will one day lower to. Fewer than two points describe no run and
+    /// paint nothing.
+    /// </remarks>
+    void DrawGradientPolyline(
+        ReadOnlySpan<Vector2> points,
+        ReadOnlySpan<Color> vertexColors,
+        ReadOnlySpan<float> vertexWidths,
+        in Paint template,
+        bool close = false);
+
+    /// <summary>
+    /// Strokes a Catmull-Rom spline whose color and width vary along its length.
+    /// </summary>
+    /// <param name="spline">
+    /// The spline, as <see cref="CatmullRom.Open"/> or <see cref="CatmullRom.Closed"/> describes it.
+    /// Its own control points index the ramps, and its cubics are drawn exactly as
+    /// <see cref="PathBuilderSplineExtensions.AddOpenCatmullRom"/> would have drawn them.
+    /// </param>
+    /// <param name="vertexColors">
+    /// One color per control point, or an empty span to take the color or brush of
+    /// <paramref name="template"/> for the whole spline. The span is not retained.
+    /// </param>
+    /// <param name="vertexWidths">
+    /// One finite nonnegative local-unit stroke width per control point, or an empty span to take
+    /// <see cref="Paint.StrokeWidth"/> from <paramref name="template"/>. The span is not retained.
+    /// </param>
+    /// <param name="template">
+    /// The stroke this spline is painted with; see <see cref="DrawGradientPolyline"/> for which of
+    /// its fields are read.
+    /// </param>
+    /// <remarks>
+    /// <para>
+    /// <strong>What a fading, tapering trail is for.</strong> A polyline or spline whose alpha
+    /// falls off toward its tail and whose width tapers with it is the ordinary way to draw a
+    /// comet's tail, a phase-space trajectory, or any "where this has been" streak. Before this
+    /// existed every author wrote the same loop — one short path and one <see cref="Paint"/> per
+    /// segment — and two unrelated samples in this repository wrote it independently, identically.
+    /// This is that loop, once, in the engine.
+    /// </para>
+    /// <para>
+    /// <strong>Per vertex in, per segment out.</strong> The ramps are stated at the vertices, which
+    /// is where an author knows them — age, arc length, speed — and every segment is painted with
+    /// the value at its own midpoint: the mean of its two endpoints, alpha-weighted for color so
+    /// that fading toward a transparent tail does not drift in hue. The ramp is therefore sampled
+    /// piecewise, not interpolated continuously across a segment; a run of a hundred samples has a
+    /// hundred steps and reads as smooth, and a run of four has four and does not. Denser control
+    /// points are the answer, not a different call.
+    /// </para>
+    /// <para>
+    /// <strong>The joins, honestly.</strong> Segments are stroked one at a time, so what happens
+    /// where two of them meet is a real question and not a detail. Interior segment ends are forced
+    /// to <see cref="LineCap.Butt"/> so that neighbours abut instead of overlapping: two translucent
+    /// strokes sharing a round cap composite twice over that cap and bead visibly at every join,
+    /// which is the artifact this API exists partly to stop authors from shipping. A spline's joins
+    /// are tangent-continuous, so its butt ends meet along a shared perpendicular and leave neither
+    /// gap nor overlap; a polyline's corner does not, and a sharp one shows a notch on the outside
+    /// of the turn no wider than half the stroke.
+    /// </para>
+    /// <para>
+    /// Two residues remain, and both are bounded. First, wherever a join does not fall on a pixel
+    /// boundary, two abutting coverage-antialiased edges split one pixel's coverage and composite
+    /// separately, dipping a translucent stroke's alpha along a hairline by at most a quarter of its
+    /// square — one part in a hundred at alpha 0.2. Second, <see cref="Paint.Cap"/> has to reach the
+    /// two ends of an open run, and a <see cref="Paint"/> caps both ends of the path it is on: the
+    /// first and last segments therefore carry it at their interior end too, so a non-butt cap
+    /// overlaps its neighbour at exactly those two joins and nowhere else. The default,
+    /// <see cref="LineCap.Butt"/>, has neither problem and paints the whole run exactly once.
+    /// </para>
+    /// <para>
+    /// <strong>This is semantics, not a fast path.</strong> One managed draw call in, N stroked
+    /// paths out — this convenience alone breaks <see cref="DrawContext2DBase"/>'s one-Tier-1-call
+    /// rule, and does so deliberately. §7.3's <c>DrawLines(in LineBatch2D)</c>, whose Skia
+    /// realization is a single feathered-quad <c>DrawVertices</c> with per-vertex colors, is the
+    /// eventual answer and is M2; it will make the joins seamless and the call count one. It will
+    /// not change this signature — the API is the semantics, and the batch tier arrives underneath
+    /// it as an override. Until then the cost is honest and bounded: a segment per sample per
+    /// frame, which Skia handles comfortably at the scales a trail actually reaches.
+    /// </para>
+    /// </remarks>
+    void DrawGradientSpline(
+        in CatmullRomSegments spline,
+        ReadOnlySpan<Color> vertexColors,
+        ReadOnlySpan<float> vertexWidths,
+        in Paint template);
+
     /// <summary>Fills or strokes an elliptical arc.</summary>
     /// <param name="center">The finite local-unit center.</param>
     /// <param name="radii">The finite nonnegative local-unit semi-axes.</param>
@@ -258,8 +366,15 @@ public interface IDrawContext2D
     /// when the pass ends, naming its own kind.
     /// </para>
     /// <para>
-    /// M1 scope: opacity and blend only. <c>Clip</c>, <c>Mask</c>, <c>Effect</c>, and
-    /// <c>Backdrop</c> are M2; no part of them is approximated here.
+    /// Opening also intersects <see cref="UnitBracket.Clip"/> when one is set, under
+    /// <see cref="UnitBracket.ClipToDevice"/>, and the clip is released when the bracket closes.
+    /// Clipping the unit at its bracket rather than inside each leaf is what makes
+    /// <see cref="Node2D.Clip"/> bound a whole subtree; a descendant's own
+    /// <see cref="PushClip(in Rect)"/> composes strictly inside it.
+    /// </para>
+    /// <para>
+    /// M1 scope: opacity, blend, and a rectangular clip. <c>Mask</c>, <c>Effect</c>, and
+    /// <c>Backdrop</c> are M2, as are path clips; no part of them is approximated here.
     /// </para>
     /// </remarks>
     /// <exception cref="ArgumentOutOfRangeException">

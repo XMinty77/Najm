@@ -334,6 +334,126 @@ public sealed class NodeCompositionTests
     }
 
     [TestMethod]
+    public void AClipBoundsTheWholeSubtreeAndNotOnlyTheNodeThatCarriesIt()
+    {
+        // 4×1 virtual on a 4×1 target: renderScale 1, virtual units are pixels. An opaque-black
+        // backdrop under a layer holding one clipped group at x = 1:
+        //   group: Position (1,0), Clip = (0,0,2,1) local ⇒ device x ∈ [1,3).
+        //   its own paint: opaque red over local (0,0,4,1) ⇒ device x ∈ [1,5), clipped to [1,3).
+        //   its child:     opaque green over local (-1,0,1,1) ⇒ device x ∈ [0,1), wholly outside.
+        //
+        // Both halves of the claim are in this one frame. Pixel 3 is black, so the clip bounded the
+        // node's own paint. Pixel 0 is black, so it also bounded a child that never mentioned it —
+        // the thing a PushClip inside each leaf's Render cannot do, because a leaf can only clip
+        // itself and a leaf that forgets is not clipped at all.
+        var expected = Black + Red + Red + Black;
+
+        var scene = new Scene { VirtualResolution = new Vector2(4f, 1f) };
+        scene.Layers.Add(new ScreenLayer { ClearColor = OpaqueBlack });
+        var layer = scene.Layers.Add(new ScreenLayer());
+        var group = layer.Root.Add(new RectDrawable(new Rect(0f, 0f, 4f, 1f), OpaqueRed));
+        group.Position = new Vector2(1f, 0f);
+        group.Clip = new Rect(0f, 0f, 2f, 1f);
+        group.Add(new RectDrawable(new Rect(-1f, 0f, 1f, 1f), OpaqueGreen));
+
+        using var provider = new RasterSkiaSurfaceProvider();
+        scene.Load(new SceneEnvironment(provider));
+        var frames = RenderBothWays(scene, provider, 4, 1);
+
+        Assert.AreEqual(expected, Hex(frames.Direct));
+        CollectionAssert.AreEqual(
+            frames.Composited,
+            frames.Direct,
+            "A node clip must reach the frame the same way on both paths.");
+
+        // Without the clip the same tree is a different frame, so the clip is doing the work and
+        // not merely agreeing with geometry that was already inside it.
+        group.Clip = null;
+        var unclipped = RenderBothWays(scene, provider, 4, 1);
+
+        Assert.AreEqual(Green + Red + Red + Red, Hex(unclipped.Direct));
+        CollectionAssert.AreEqual(unclipped.Composited, unclipped.Direct);
+
+        // The rectangle is in the node's own local space, so it scales with the node: the same
+        // (0,0,2,1) under Scale 2 covers local x ∈ [0,2) ⇒ device x ∈ [1,5), and only the surface
+        // ends it. The node's red spans local [0,4) ⇒ device [1,9), so pixels 1..3 are red and the
+        // green child, still at device [0,1), is still outside.
+        group.Clip = new Rect(0f, 0f, 2f, 1f);
+        group.Scale = new Vector2(2f, 1f);
+        var scaled = RenderBothWays(scene, provider, 4, 1);
+
+        Assert.AreEqual(Black + Red + Red + Red, Hex(scaled.Direct));
+        CollectionAssert.AreEqual(scaled.Composited, scaled.Direct);
+    }
+
+    [TestMethod]
+    public void AClipAndAGroupOpacityApplyToOneAndTheSameUnit()
+    {
+        // The group-opacity frame from the first test in this class, with a clip added: two
+        // overlapping opaque children under a group at opacity 0.2, clipped to device x ∈ [0,2).
+        //   group content: x=0 red, x∈{1,2} green (green painted last wins), x=3 nothing.
+        //   clip keeps x ∈ {0,1}; over black at 0.2 that is 0.2·255 = 51 = 0x33.
+        //   ⇒ 330000, 003300, 000000, 000000.
+        //
+        // Pixel 1 is the load-bearing one twice over. It is inside the clip, so it survives; and it
+        // is the pixel where the two children overlap, so its red channel is 0 only if the children
+        // composited among themselves before the group alpha applied. A clip that opened a second,
+        // separate bracket around the subtree would still produce the right silhouette here and the
+        // wrong overlap — one unit is the claim, and this is the pixel that checks it.
+        const string RedAtOneFifth = "330000ff";
+        const string GreenAtOneFifth = "003300ff";
+        var expected = RedAtOneFifth + GreenAtOneFifth + Black + Black;
+
+        var scene = new Scene { VirtualResolution = new Vector2(4f, 1f) };
+        scene.Layers.Add(new ScreenLayer { ClearColor = OpaqueBlack });
+        var layer = scene.Layers.Add(new ScreenLayer());
+        var group = layer.Root.Add(new Node2D
+        {
+            Opacity = 0.2f,
+            Clip = new Rect(0f, 0f, 2f, 1f),
+        });
+        group.Add(new RectDrawable(new Rect(0f, 0f, 2f, 1f), OpaqueRed));
+        group.Add(new RectDrawable(new Rect(1f, 0f, 2f, 1f), OpaqueGreen));
+
+        using var provider = new RasterSkiaSurfaceProvider();
+        scene.Load(new SceneEnvironment(provider));
+        var frames = RenderBothWays(scene, provider, 4, 1);
+
+        Assert.AreEqual(expected, Hex(frames.Direct));
+        CollectionAssert.AreEqual(frames.Composited, frames.Direct);
+        Assert.AreEqual(
+            0,
+            frames.Direct[4],
+            "The overlap must carry no red: a clipped unit is still one unit, and its children "
+                + "composite among themselves before the group alpha applies.");
+    }
+
+    [TestMethod]
+    public void ADescendantCannotPushItsWayOutOfAnAncestorsClip()
+    {
+        // A leaf's own PushClip composes strictly inside the bracket, so a child that clips to a
+        // rectangle wider than its parent's gets the intersection and not its own wish.
+        //   parent clip: device x ∈ [0,2). child PushClip: x ∈ [1,4). intersection: x ∈ [1,2).
+        var expected = Black + Red + Black + Black;
+
+        var scene = new Scene { VirtualResolution = new Vector2(4f, 1f) };
+        scene.Layers.Add(new ScreenLayer { ClearColor = OpaqueBlack });
+        var layer = scene.Layers.Add(new ScreenLayer());
+        var group = layer.Root.Add(new Node2D { Clip = new Rect(0f, 0f, 2f, 1f) });
+        group.Add(new SelfClippingRectDrawable(
+            new Rect(0f, 0f, 4f, 1f),
+            new Rect(1f, 0f, 3f, 1f),
+            OpaqueRed));
+
+        using var provider = new RasterSkiaSurfaceProvider();
+        scene.Load(new SceneEnvironment(provider));
+        var frames = RenderBothWays(scene, provider, 4, 1);
+
+        Assert.AreEqual(expected, Hex(frames.Direct));
+        CollectionAssert.AreEqual(frames.Composited, frames.Direct);
+    }
+
+    [TestMethod]
     public void SetEngineTransformToleratesAnOpenUnitBracketButStillRefusesAnAuthorPush()
     {
         // Exactly the rule the layer bracket already lives by, extended to the node bracket, and for
@@ -511,6 +631,37 @@ public sealed class NodeCompositionTests
         {
             Draws++;
             context.DrawPath(path, paint);
+        }
+    }
+
+    /// <summary>Fills a rectangle inside a clip it pushes and pops itself, as a leaf would.</summary>
+    private sealed class SelfClippingRectDrawable : Drawable
+    {
+        private readonly PathBuilder path;
+        private readonly Paint paint;
+        private readonly Rect bounds;
+        private readonly Rect ownClip;
+
+        internal SelfClippingRectDrawable(Rect bounds, Rect ownClip, Color color)
+        {
+            this.bounds = bounds;
+            this.ownClip = ownClip;
+            paint = Paint.Fill(color, isAntialias: false);
+            path = new PathBuilder(initialCapacity: 5)
+                .MoveTo(bounds.X, bounds.Y)
+                .LineTo(bounds.X + bounds.Width, bounds.Y)
+                .LineTo(bounds.X + bounds.Width, bounds.Y + bounds.Height)
+                .LineTo(bounds.X, bounds.Y + bounds.Height)
+                .Close();
+        }
+
+        public override Rect GeometryBounds => bounds;
+
+        public override void Render(IDrawContext2D context)
+        {
+            context.PushClip(ownClip);
+            context.DrawPath(path, paint);
+            context.PopClip();
         }
     }
 

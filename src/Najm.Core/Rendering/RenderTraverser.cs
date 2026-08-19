@@ -57,7 +57,7 @@ public static class RenderTraverser
     /// Node-tier isolation happens inside the walk, one bracket per isolating node — see
     /// <see cref="Node2D.RequiresIsolation"/> — and nests inside the layer bracket. The M2 terms of
     /// §6.7's predicate, a mask, an effect, or a backdrop read, are not implemented and are not
-    /// approximated.
+    /// approximated; the rectangular case of <c>Clip</c> is, and rides the same bracket.
     /// </para>
     /// </remarks>
     /// <exception cref="ArgumentNullException">
@@ -263,7 +263,11 @@ public static class RenderTraverser
     /// after the last descendant, so the unit spans exactly the node's emitted content plus its
     /// subtree — §6.7's compositing unit, no more and no less. Opening it discards the engine
     /// transform the previous sibling left installed, which is why the transform is set after the
-    /// bracket rather than before it.
+    /// bracket rather than before it, and why a <see cref="Node2D.Clip"/> — stated in the node's
+    /// own local coordinates — travels into the bracket alongside the mapping it is read under.
+    /// That bracketing is exactly what a leaf-level
+    /// <see cref="IDrawContext2D.PushClip(in Rect)"/> cannot do: the clip bounds the subtree, and
+    /// no descendant can push its way back out of it.
     /// </para>
     /// <para>
     /// The overwhelmingly common node isolates nothing. <see cref="Node2D.RequiresIsolation"/> is a
@@ -289,7 +293,10 @@ public static class RenderTraverser
         var isolates = spatial is not null && spatial.RequiresIsolation;
         if (isolates)
         {
-            context.BeginUnitBracket(new UnitBracket(spatial!.Opacity, spatial.Blend));
+            // The clip is stated in the node's local coordinates and the bracket opens before that
+            // node's engine transform is installed, so the mapping it is read under travels with it.
+            context.BeginUnitBracket(
+                new UnitBracket(spatial!.Opacity, spatial.Blend, spatial.Clip, engineToDevice));
         }
 
         context.SetEngineTransform(engineToDevice);

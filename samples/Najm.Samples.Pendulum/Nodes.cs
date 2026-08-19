@@ -86,17 +86,35 @@ internal sealed class DividerNode : Drawable
 }
 
 /// <summary>
-/// One pendulum's phase-space trail: its recent (θ2, ω2) history as a Catmull-Rom spline, drawn one
-/// cubic segment at a time so alpha and width can ramp along its length. This is still Tier-1
-/// (<see cref="IDrawContext2D.DrawPath"/>) even after Tier-2 landed — a fading, tapering spline
-/// isn't one of the seven shape conveniences, and rightly so; see NOTES.md.
+/// One pendulum's phase-space trail: its recent (θ2, ω2) history as a Catmull-Rom spline that fades
+/// and tapers toward its tail, drawn with one <see cref="IDrawContext2D.DrawGradientSpline"/> call
+/// per contiguous run.
 /// </summary>
+/// <remarks>
+/// This was N hand-rolled <see cref="IDrawContext2D.DrawPath"/> calls, one per cubic, each with its
+/// own <see cref="Paint"/> — the workaround NOTES.md reported and the Orrery sample had written
+/// independently. The engine owns the loop now: the ramp is stated per sample, where age is known,
+/// and the convenience resolves it per segment and abuts the joins so the translucent strokes stop
+/// beading where they meet.
+/// </remarks>
 internal sealed class PhaseTrailNode : Drawable
 {
     private readonly PendulumInstance pendulum;
-    private readonly PathBuilder segmentPath = new(initialCapacity: 4);
+    private readonly Paint trailPaint;
 
-    public PhaseTrailNode(PendulumInstance pendulum) => this.pendulum = pendulum;
+    /// <summary>Per-sample ramp, refilled each frame and sliced per run; never reallocated.</summary>
+    private readonly Color[] colors = new Color[Design.TrailCapacity];
+    private readonly float[] widths = new float[Design.TrailCapacity];
+
+    public PhaseTrailNode(PendulumInstance pendulum)
+    {
+        this.pendulum = pendulum;
+
+        // The template supplies everything that does not vary along the trail. Its color is
+        // unused — the ramp replaces it — and the round cap rounds each run's two outer ends, the
+        // newest of which sits under the phase point's own disc anyway.
+        trailPaint = Paint.Stroke(pendulum.Accent, 1f, cap: LineCap.Round);
+    }
 
     public override Rect VisualBounds => new(Design.PhaseX0, Design.PhaseY0, Design.PhaseWidth, Design.PhaseHeight);
 
@@ -114,12 +132,20 @@ internal sealed class PhaseTrailNode : Drawable
         // the panel so that never reads as content leaking past its own frame.
         context.PushClip(VisualBounds);
 
+        // Age runs off each sample's true position in the whole trail — 0 at the tail, 1 at the
+        // newest sample — so the fade stays continuous across the wrap breaks below.
+        var last = total - 1;
+        for (var i = 0; i < total; i++)
+        {
+            var age = i / (float)last;
+            colors[i] = pendulum.Accent.WithAlpha(0.65f * age * age);
+            widths[i] = 0.9f + (2.6f * age);
+        }
+
         // θ2 wraps to [-π, π] (Design.PhasePixel), so a sample-to-sample jump near the panel's
         // full width is not real motion — it is the same physical angle re-entering from the other
         // side. Splining across that jump would draw a spurious chord clear across the panel, so
-        // each contiguous run between wraps is its own spline; age (and therefore alpha/width)
-        // still runs off each point's true position in the whole trail, so the fade stays continuous
-        // across the break.
+        // each contiguous run between wraps is its own spline, sharing the one ramp above.
         var runStart = 0;
         for (var i = 1; i <= total; i++)
         {
@@ -132,38 +158,17 @@ internal sealed class PhaseTrailNode : Drawable
             var runLength = i - runStart;
             if (runLength >= 2)
             {
-                DrawRun(context, points.Slice(runStart, runLength), runStart, total);
+                context.DrawGradientSpline(
+                    points.Slice(runStart, runLength),
+                    colors.AsSpan(runStart, runLength),
+                    widths.AsSpan(runStart, runLength),
+                    trailPaint);
             }
 
             runStart = i;
         }
 
         context.PopClip();
-    }
-
-    private void DrawRun(IDrawContext2D context, ReadOnlySpan<Vector2> run, int globalStart, int total)
-    {
-        var spline = CatmullRom.Open(run);
-        var segmentCount = spline.Count;
-
-        for (var i = 0; i < segmentCount; i++)
-        {
-            var segment = spline[i];
-            var age = (globalStart + i + 1) / (float)(total - 1); // 0 near the tail, 1 at the newest sample.
-            var alpha = 0.65f * age * age;
-            var width = 0.9f + (2.6f * age);
-
-            segmentPath.Reset();
-            segmentPath.MoveTo(segment.Start.X, segment.Start.Y);
-            segmentPath.CubicTo(
-                segment.Control1.X, segment.Control1.Y,
-                segment.Control2.X, segment.Control2.Y,
-                segment.End.X, segment.End.Y);
-
-            context.DrawPath(
-                segmentPath,
-                Paint.Stroke(pendulum.Accent.WithAlpha(alpha), width, cap: LineCap.Round));
-        }
     }
 }
 

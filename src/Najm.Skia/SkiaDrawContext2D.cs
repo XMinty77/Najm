@@ -95,7 +95,8 @@ public sealed class SkiaDrawContext2D : DrawContext2DBase
 
     /// <summary>
     /// Native save slots one engine unit bracket occupies: the group layer alone. A node has no
-    /// viewport to clip and no target of its own to clear, so it needs no second slot.
+    /// target of its own to clear, and its clip is intersected inside the group layer's own slot
+    /// rather than beneath it, so it needs no second slot however it is configured.
     /// </summary>
     private const int SaveSlotsPerUnitBracket = 1;
 
@@ -343,6 +344,14 @@ public sealed class SkiaDrawContext2D : DrawContext2DBase
     /// still in force at the unit's baseline, so a unit inside a viewport'd layer is already bounded
     /// by that viewport rather than by the whole surface.
     /// </para>
+    /// <para>
+    /// A <see cref="UnitBracket.Clip"/> is intersected <em>inside</em> that layer's save slot rather
+    /// than in a slot of its own, so one restore still closes the whole bracket. The consequence is
+    /// that the offscreen is sized by the clip that was active when the bracket opened rather than
+    /// by the node's own clip — the same conservative trade the missing bounds hint already makes,
+    /// costing fill rate and never correctness, since every pixel the tighter layer would hold is
+    /// inside the wider one and the clip still bounds what reaches it.
+    /// </para>
     /// </remarks>
     public override void BeginUnitBracket(in UnitBracket bracket)
     {
@@ -366,6 +375,21 @@ public sealed class SkiaDrawContext2D : DrawContext2DBase
 
             StampColor(new UtilsColor(1f, 1f, 1f, bracket.Opacity), blendMode);
             canvas.SaveLayer(nativePaint);
+            if (bracket.Clip is { } clip)
+            {
+                // Inside the layer's own save slot, so the single restore that closes the bracket
+                // takes the clip with it and no second slot is needed. The clip is applied under
+                // the node's engine transform — the mapping its local rectangle is written in —
+                // and the matrix is put back afterwards, because the caller installs its own next.
+                var baselineMatrix = canvas.TotalMatrix;
+                canvas.Concat(ToSkiaMatrix(bracket.ClipToDevice * deviceOffset));
+                canvas.ClipRect(
+                    SKRect.Create(clip.X, clip.Y, clip.Width, clip.Height),
+                    SKClipOperation.Intersect,
+                    antialias: true);
+                canvas.SetMatrix(baselineMatrix);
+            }
+
             engineSlotBaseline += SaveSlotsPerUnitBracket;
             bracketStack[engineBracketDepth++] = BracketKind.Unit;
         }

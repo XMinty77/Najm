@@ -50,23 +50,44 @@ internal sealed class SunNode : Drawable
 }
 
 /// <summary>
-/// One orbit: the faint complete ellipse, and the bright arc of light the body drags behind it.
-/// The trail is a fan of short segments with a rising alpha and width ramp, because the engine
-/// has no per-vertex colored polyline and no way to vary alpha along one stroke.
+/// One orbit: the faint complete ellipse, and the bright arc of light the body drags behind it. The
+/// trail is one ramped run per pass — alpha and width rising toward the body — drawn through
+/// <see cref="IDrawContext2D.DrawGradientPolyline"/>.
 /// </summary>
+/// <remarks>
+/// This was a hand-rolled fan of short <see cref="IDrawContext2D.DrawPath"/> calls, one per segment
+/// per pass, because the engine had no per-vertex colored polyline. It has one now, so the ramp is
+/// stated once per vertex and the engine resolves it per segment. Two visible consequences beyond
+/// the deleted loop: the joins abut instead of overlapping, which matters more here than usual
+/// because these strokes are additive and an overlap adds twice; and the ramp is sampled at each
+/// segment's midpoint rather than at its leading edge, so the streak brightens half a segment later
+/// than it used to.
+/// </remarks>
 internal sealed class OrbitRingNode : Drawable
 {
     private const int TrailSegments = 30;
+    private const int TrailVertices = TrailSegments + 1;
 
     private readonly Body body;
     private readonly PathBuilder ring = new(initialCapacity: 14);
-    private readonly PathBuilder segment = new(initialCapacity: 2);
+
+    /// <summary>The trail's geometry and both passes' ramps, refilled each frame in place.</summary>
+    private readonly Vector2[] trail = new Vector2[TrailVertices];
+    private readonly Color[] spillColors = new Color[TrailVertices];
+    private readonly float[] spillWidths = new float[TrailVertices];
+    private readonly Color[] coreColors = new Color[TrailVertices];
+    private readonly float[] coreWidths = new float[TrailVertices];
+    private readonly Paint trailTemplate;
 
     public OrbitRingNode(Body body)
     {
         this.body = body;
         ZIndex = -600;
         ring.AddEllipse(0f, 0f, body.Spec.OrbitRadius, body.Spec.SemiMinorAxis);
+
+        // Everything the two passes share. The color and width come from the ramps, and butt caps
+        // at the run's ends as well as its joins keep an additive stroke from ever adding twice.
+        trailTemplate = Paint.Stroke(body.Spec.Color, 1f, blendMode: BlendMode.Plus);
     }
 
     public override Rect VisualBounds =>
@@ -84,35 +105,25 @@ internal sealed class OrbitRingNode : Drawable
         var span = body.TrailTurns * MathF.Tau;
         var scale = MathF.Sqrt(spec.Radius / 12f);
 
-        for (var i = 0; i < TrailSegments; i++)
+        for (var i = 0; i < TrailVertices; i++)
         {
-            var t0 = i / (float)TrailSegments;
-            var t1 = (i + 1f) / TrailSegments;
-            var a0 = body.Angle - (span * (1f - t0));
-            var a1 = body.Angle - (span * (1f - t1));
-
-            segment.Reset();
-            segment.MoveTo(spec.OrbitRadius * MathF.Cos(a0), spec.SemiMinorAxis * MathF.Sin(a0));
-            segment.LineTo(spec.OrbitRadius * MathF.Cos(a1), spec.SemiMinorAxis * MathF.Sin(a1));
+            var t = i / (float)TrailSegments;
+            var angle = body.Angle - (span * (1f - t));
+            trail[i] = new Vector2(
+                spec.OrbitRadius * MathF.Cos(angle),
+                spec.SemiMinorAxis * MathF.Sin(angle));
 
             // Two passes: a wide, faint one that reads as the light spilling off the streak, and
             // a narrow bright one that reads as the streak itself.
-            var ramp = t1 * t1;
-            context.DrawPath(
-                segment,
-                Paint.Stroke(
-                    spec.Color.WithAlpha(0.085f * ramp),
-                    (2f + (9f * ramp)) * scale,
-                    blendMode: BlendMode.Plus,
-                    cap: LineCap.Round));
-            context.DrawPath(
-                segment,
-                Paint.Stroke(
-                    spec.Color.WithAlpha(0.34f * ramp),
-                    (0.5f + (2.4f * ramp)) * scale,
-                    blendMode: BlendMode.Plus,
-                    cap: LineCap.Round));
+            var ramp = t * t;
+            spillColors[i] = spec.Color.WithAlpha(0.085f * ramp);
+            spillWidths[i] = (2f + (9f * ramp)) * scale;
+            coreColors[i] = spec.Color.WithAlpha(0.34f * ramp);
+            coreWidths[i] = (0.5f + (2.4f * ramp)) * scale;
         }
+
+        context.DrawGradientPolyline(trail, spillColors, spillWidths, trailTemplate);
+        context.DrawGradientPolyline(trail, coreColors, coreWidths, trailTemplate);
     }
 }
 

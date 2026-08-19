@@ -18,6 +18,15 @@ namespace Najm.Core;
 /// from this class is how a backend avoids owning that problem.
 /// </para>
 /// <para>
+/// <strong>One convenience breaks that rule on purpose.</strong>
+/// <see cref="DrawGradientPolyline"/> and <see cref="DrawGradientSpline"/> emit one stroked path
+/// per segment, because a run whose color and width change along its length has no single
+/// <see cref="Paint"/> to be drawn with. That is §7.3's portable batch default — "a loop over
+/// Tier 1/2" — reached for early, at author level, so that nobody writes the loop by hand while the
+/// batch tier is still M2. Their <c>DrawGradientSpline</c> remarks state the consequences at the
+/// joins rather than leaving them to be discovered.
+/// </para>
+/// <para>
 /// <strong>Overrides are allowed but deliberately unused.</strong> §7.2 permits a backend to
 /// override any convenience for quality or speed — <c>SKCanvas.DrawCircle</c> is the example it
 /// gives. <c>SkiaDrawContext2D</c> nonetheless takes the portable default for every
@@ -194,6 +203,113 @@ public abstract class DrawContext2DBase : IDrawContext2D
     }
 
     /// <inheritdoc />
+    /// <exception cref="ArgumentException">
+    /// A ramp is non-empty and its length is not <c>points.Length</c>, or
+    /// <paramref name="vertexColors"/> is non-empty while <paramref name="template"/> carries a
+    /// brush.
+    /// </exception>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// A width is not finite and nonnegative, or the ramp is empty and the template's stroke width
+    /// is not positive.
+    /// </exception>
+    public virtual void DrawGradientPolyline(
+        ReadOnlySpan<Vector2> points,
+        ReadOnlySpan<Color> vertexColors,
+        ReadOnlySpan<float> vertexWidths,
+        in Paint template,
+        bool close = false)
+    {
+        var segmentCount = points.Length < 2 ? 0 : close ? points.Length : points.Length - 1;
+        if (segmentCount == 0)
+        {
+            return;
+        }
+
+        RequireRamps(points.Length, vertexColors, vertexWidths, template);
+
+        using var scratch = RentScratchPath();
+        for (var index = 0; index < segmentCount; index++)
+        {
+            var next = index + 1 == points.Length ? 0 : index + 1;
+            var paint = SegmentPaint(
+                index,
+                index,
+                next,
+                segmentCount,
+                close,
+                vertexColors,
+                vertexWidths,
+                template);
+            if (paint is not { } stroke)
+            {
+                continue;
+            }
+
+            scratch.Path.Reset();
+            scratch.Path.MoveTo(points[index].X, points[index].Y);
+            scratch.Path.LineTo(points[next].X, points[next].Y);
+            DrawPath(scratch.Path, stroke);
+        }
+    }
+
+    /// <inheritdoc />
+    /// <exception cref="ArgumentException">
+    /// A ramp is non-empty and its length is not the spline's control-point count, or
+    /// <paramref name="vertexColors"/> is non-empty while <paramref name="template"/> carries a
+    /// brush.
+    /// </exception>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// A width is not finite and nonnegative, or the ramp is empty and the template's stroke width
+    /// is not positive.
+    /// </exception>
+    public virtual void DrawGradientSpline(
+        in CatmullRomSegments spline,
+        ReadOnlySpan<Color> vertexColors,
+        ReadOnlySpan<float> vertexWidths,
+        in Paint template)
+    {
+        var segmentCount = spline.Count;
+        if (segmentCount == 0)
+        {
+            return;
+        }
+
+        var points = spline.Points;
+        RequireRamps(points.Length, vertexColors, vertexWidths, template);
+
+        using var scratch = RentScratchPath();
+        for (var index = 0; index < segmentCount; index++)
+        {
+            var next = index + 1 == points.Length ? 0 : index + 1;
+            var paint = SegmentPaint(
+                index,
+                index,
+                next,
+                segmentCount,
+                spline.IsClosed,
+                vertexColors,
+                vertexWidths,
+                template);
+            if (paint is not { } stroke)
+            {
+                continue;
+            }
+
+            var segment = spline[index];
+            scratch.Path.Reset();
+            scratch.Path.MoveTo(segment.Start.X, segment.Start.Y);
+            scratch.Path.CubicTo(
+                segment.Control1.X,
+                segment.Control1.Y,
+                segment.Control2.X,
+                segment.Control2.Y,
+                segment.End.X,
+                segment.End.Y);
+            DrawPath(scratch.Path, stroke);
+        }
+    }
+
+    /// <inheritdoc />
     public virtual void DrawArc(
         in Vector2 center,
         in Vector2 radii,
@@ -205,6 +321,164 @@ public abstract class DrawContext2DBase : IDrawContext2D
         using var scratch = RentScratchPath();
         scratch.Path.AddArc(center, radii, startAngle, sweepAngle, mode);
         DrawPath(scratch.Path, paint);
+    }
+
+    /// <summary>Validates a gradient run's ramps against its vertex count and its template.</summary>
+    /// <remarks>
+    /// Everything checkable is checked once, before the first segment is drawn, so a mismatched ramp
+    /// cannot leave half a run on the surface. Widths are validated here rather than left to
+    /// <see cref="Paint"/>'s own guard because <see cref="Paint.Stroke(Color, float, bool, BlendMode, LineCap, LineJoin, float, StrokeDash?)"/>
+    /// would name <c>width</c> on a value the caller never passed.
+    /// </remarks>
+    private static void RequireRamps(
+        int vertexCount,
+        ReadOnlySpan<Color> vertexColors,
+        ReadOnlySpan<float> vertexWidths,
+        in Paint template)
+    {
+        if (!vertexColors.IsEmpty && vertexColors.Length != vertexCount)
+        {
+            throw new ArgumentException(
+                $"A color ramp must carry one color per vertex: {vertexCount} expected, "
+                + $"{vertexColors.Length} given.",
+                nameof(vertexColors));
+        }
+        if (!vertexColors.IsEmpty && template.Brush is not null)
+        {
+            throw new ArgumentException(
+                "A per-vertex color ramp replaces the paint's color source, so the template must "
+                + "not carry a brush. Drop the ramp to stroke the whole run with the brush, or drop "
+                + "the brush to ramp the color.",
+                nameof(template));
+        }
+        if (!vertexWidths.IsEmpty && vertexWidths.Length != vertexCount)
+        {
+            throw new ArgumentException(
+                $"A width ramp must carry one width per vertex: {vertexCount} expected, "
+                + $"{vertexWidths.Length} given.",
+                nameof(vertexWidths));
+        }
+
+        if (vertexWidths.IsEmpty)
+        {
+            if (template.StrokeWidth <= 0f)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(template),
+                    template.StrokeWidth,
+                    "Without a width ramp the template's stroke width paints the whole run, so it "
+                    + "must be positive. default(Paint) and Paint.Fill carry no usable width.");
+            }
+
+            return;
+        }
+
+        for (var index = 0; index < vertexWidths.Length; index++)
+        {
+            if (!float.IsFinite(vertexWidths[index]) || vertexWidths[index] < 0f)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(vertexWidths),
+                    vertexWidths[index],
+                    "A ramped stroke width must be finite and nonnegative. Zero is allowed and "
+                    + "paints nothing, which is how a taper reaches a point.");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Resolves the paint for one segment of a gradient run, or null when it paints nothing.
+    /// </summary>
+    /// <remarks>
+    /// The cap is the caller's only on an open run's two terminal segments, which are the only ones
+    /// with an end of the run to cap; every interior segment is <see cref="LineCap.Butt"/> so that
+    /// neighbouring strokes abut instead of compositing twice over a shared cap. A closed run has no
+    /// ends and is butt throughout. A terminal segment carries the caller's cap at its interior end
+    /// as well, because a paint caps both ends of the path it is on — the one place a non-butt cap
+    /// still overlaps, and the reason butt is the default worth keeping.
+    /// </remarks>
+    private static Paint? SegmentPaint(
+        int segmentIndex,
+        int start,
+        int end,
+        int segmentCount,
+        bool close,
+        ReadOnlySpan<Color> vertexColors,
+        ReadOnlySpan<float> vertexWidths,
+        in Paint template)
+    {
+        var width = vertexWidths.IsEmpty
+            ? template.StrokeWidth
+            : (vertexWidths[start] + vertexWidths[end]) * 0.5f;
+        if (width <= 0f)
+        {
+            return null;
+        }
+
+        var cap = !close && (segmentIndex == 0 || segmentIndex == segmentCount - 1)
+            ? template.Cap
+            : LineCap.Butt;
+
+        if (vertexColors.IsEmpty)
+        {
+            return template.Brush is { } brush
+                ? Paint.Stroke(
+                    brush,
+                    width,
+                    template.IsAntialias,
+                    template.BlendMode,
+                    cap,
+                    template.Join,
+                    template.MiterLimit,
+                    template.Dash)
+                : Paint.Stroke(
+                    template.Color,
+                    width,
+                    template.IsAntialias,
+                    template.BlendMode,
+                    cap,
+                    template.Join,
+                    template.MiterLimit,
+                    template.Dash);
+        }
+
+        return Paint.Stroke(
+            Midpoint(vertexColors[start], vertexColors[end]),
+            width,
+            template.IsAntialias,
+            template.BlendMode,
+            cap,
+            template.Join,
+            template.MiterLimit,
+            template.Dash);
+    }
+
+    /// <summary>Averages two ramp colors the way a segment between them should read.</summary>
+    /// <remarks>
+    /// The mean is taken on premultiplied channels and then unpremultiplied, which is the only
+    /// reading that keeps a fade toward transparency from dragging the hue toward whatever the
+    /// invisible endpoint's channels happen to hold. Two colors of equal alpha reduce to the plain
+    /// component mean, so the common all-one-hue trail is unaffected. When both alphas are zero the
+    /// segment is invisible and the straight mean is returned rather than dividing by it.
+    /// </remarks>
+    private static Color Midpoint(in Color start, in Color end)
+    {
+        var alpha = (start.A + end.A) * 0.5f;
+        if (alpha <= 0f)
+        {
+            return new Color(
+                (start.R + end.R) * 0.5f,
+                (start.G + end.G) * 0.5f,
+                (start.B + end.B) * 0.5f,
+                0f);
+        }
+
+        var scale = 0.5f / alpha;
+        return new Color(
+            ((start.R * start.A) + (end.R * end.A)) * scale,
+            ((start.G * start.A) + (end.G * end.A)) * scale,
+            ((start.B * start.A) + (end.B * end.A)) * scale,
+            alpha);
     }
 
     /// <summary>Rents the context's scratch geometry with <see cref="FillRule.NonZero"/>.</summary>

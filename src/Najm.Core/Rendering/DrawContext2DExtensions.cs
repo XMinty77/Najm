@@ -54,6 +54,49 @@ public static class DrawContext2DExtensions
         context.DrawRoundRect(bounds, new Vector2(cornerRadius, cornerRadius), paint);
     }
 
+    /// <summary>
+    /// Strokes the Catmull-Rom spline through a run of control points, with color and width varying
+    /// along its length.
+    /// </summary>
+    /// <param name="context">The draw context.</param>
+    /// <param name="points">The control points, in order; the span is not retained.</param>
+    /// <param name="vertexColors">One color per control point, or an empty span to use the template's.</param>
+    /// <param name="vertexWidths">One width per control point, or an empty span to use the template's.</param>
+    /// <param name="template">The stroke the spline is painted with.</param>
+    /// <param name="closed">
+    /// Whether the spline wraps from the last control point back to the first, with no repeat of the
+    /// first point at the end.
+    /// </param>
+    /// <param name="alpha">
+    /// The parameterization exponent in [0, 1], centripetal by default. See
+    /// <see cref="CatmullRom"/> for why that default is not uniform — sampled trajectories are
+    /// exactly the unevenly spaced data uniform parameterization cusps on.
+    /// </param>
+    /// <remarks>
+    /// The spelling for the common case, where the author has control points rather than a
+    /// <see cref="CatmullRomSegments"/> already in hand. It adds nothing:
+    /// <see cref="CatmullRom.Open(ReadOnlySpan{Vector2}, float)"/> or
+    /// <see cref="CatmullRom.Closed(ReadOnlySpan{Vector2}, float)"/>, then
+    /// <see cref="IDrawContext2D.DrawGradientSpline"/>, which owns the whole contract.
+    /// </remarks>
+    /// <exception cref="ArgumentNullException"><paramref name="context"/> is null.</exception>
+    public static void DrawGradientSpline(
+        this IDrawContext2D context,
+        ReadOnlySpan<Vector2> points,
+        ReadOnlySpan<Color> vertexColors,
+        ReadOnlySpan<float> vertexWidths,
+        in Paint template,
+        bool closed = false,
+        float alpha = CatmullRom.CentripetalAlpha)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+
+        var spline = closed
+            ? CatmullRom.Closed(points, alpha)
+            : CatmullRom.Open(points, alpha);
+        context.DrawGradientSpline(spline, vertexColors, vertexWidths, template);
+    }
+
     /// <summary>Fills or strokes a circular arc.</summary>
     /// <param name="context">The draw context.</param>
     /// <param name="center">The finite local-unit center.</param>

@@ -444,6 +444,86 @@ public sealed class RenderTraverserTests
     }
 
     [TestMethod]
+    public void AClipAloneOpensAUnitBracketCarryingTheRectAndTheMatrixItIsWrittenIn()
+    {
+        // The clip is stated in the node's local coordinates, and the bracket opens before that
+        // node's engine transform is installed — opening one sheds whatever transform was there.
+        // So the rectangle cannot travel alone: the mapping it is read under goes with it, and it is
+        // the very transform the traverser installs on the next line.
+        var scene = new Scene { VirtualResolution = new Vector2(100f, 50f) };
+        var layer = scene.Layers.Add(new ScreenLayer());
+        var clipped = layer.Root.Add(new Node2D
+        {
+            Position = new Vector2(7f, 3f),
+            Clip = new Rect(0f, 0f, 20f, 10f),
+        });
+        scene.Load(TestEnvironment.Stub());
+
+        var context = new RecordingContext(renderScale: 2f);
+        scene.RenderDirect(context);
+
+        // Nothing but the clip is set, so this node isolates on the clip alone.
+        Assert.HasCount(1, context.Units);
+        Assert.AreEqual(1f, context.Units[0].Opacity);
+        Assert.AreEqual(BlendMode.SrcOver, context.Units[0].Blend);
+        Assert.AreEqual(new Rect(0f, 0f, 20f, 10f), context.Units[0].Clip);
+
+        // translate(7, 3) under a screen layer at render scale 2: scale 2 with the translation
+        // doubled into device pixels.
+        var expected = Matrix3x2.CreateTranslation(7f, 3f) * Matrix3x2.CreateScale(2f);
+        Assert.AreEqual(expected, context.Units[0].ClipToDevice);
+        Assert.AreEqual(new Vector2(14f, 6f), context.Units[0].ClipToDevice.Translation);
+
+        // Clearing it takes the node back off the isolating path, exactly as clearing an opacity
+        // does: the predicate is read per frame, never latched.
+        clipped.Clip = null;
+        var quiet = new RecordingContext(renderScale: 2f);
+        scene.RenderDirect(quiet);
+
+        Assert.AreEqual(0, quiet.UnitCount);
+    }
+
+    [TestMethod]
+    public void AClippedNodesBracketStillSpansItsWholeSubtree()
+    {
+        // The point of putting the clip on the bracket rather than in each leaf's Render: it opens
+        // before the node paints and closes after the last descendant, so it bounds the subtree.
+        var scene = new Scene();
+        var log = new RenderLog();
+        var layer = scene.Layers.Add(new ScreenLayer());
+        var group = layer.Root.Add(new LoggingDrawable("group", log));
+        group.Clip = new Rect(0f, 0f, 4f, 4f);
+        group.Add(new LoggingDrawable("child", log));
+        layer.Root.Add(new LoggingDrawable("sibling", log));
+        scene.Load(TestEnvironment.Stub());
+
+        var context = new RecordingContext();
+        scene.RenderDirect(context);
+
+        Assert.AreEqual(
+            "open1,engine,engine,unit+1,engine,group,engine,child,unit-1,engine,sibling,engine,close1",
+            context.Events);
+    }
+
+    [TestMethod]
+    public void AUnitBracketRejectsANonFiniteClipMappingButIgnoresItWithoutAClip()
+    {
+        var broken = new Matrix3x2(1f, 0f, 0f, float.NaN, 0f, 0f);
+
+        var rejected = Assert.ThrowsExactly<ArgumentOutOfRangeException>(
+            () => _ = new UnitBracket(1f, BlendMode.SrcOver, new Rect(0f, 0f, 1f, 1f), broken));
+        Assert.AreEqual("clipToDevice", rejected.ParamName);
+
+        // With no clip the matrix has nothing to mean, so it is zeroed rather than validated: two
+        // brackets that clip nothing must compare equal however their caller reached them.
+        var unclipped = new UnitBracket(1f, BlendMode.SrcOver, null, broken);
+
+        Assert.IsNull(unclipped.Clip);
+        Assert.AreEqual(default, unclipped.ClipToDevice);
+        Assert.AreEqual(new UnitBracket(1f, BlendMode.SrcOver), unclipped);
+    }
+
+    [TestMethod]
     public void AUnitBracketEnclosesTheNodesOwnPaintAndItsWholeSubtree()
     {
         // The unit is the node plus its descendants, which is what makes the opacity a group
