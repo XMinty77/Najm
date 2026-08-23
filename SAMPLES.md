@@ -102,15 +102,46 @@ llvmpipe, no hardware needed.
 
 ## Readiness
 
-| # | Scene | Blocked on |
+| # | Scene | State |
 |---|---|---|
-| 3 | Orrery | Catmull-Rom (nice to have); glow (optional) |
-| 1 | Double pendulum | Catmull-Rom; per-segment alpha approach |
-| 4 | Sine construction | Catmull-Rom; text for labels only |
+| 3 | Orrery | **Built.** `samples/Najm.Samples.Orrery/` |
+| 1 | Double pendulum | **Built.** `samples/Najm.Samples.Pendulum/` |
+| 6 | Mandelbrot / Julia | **In progress.** `samples/Najm.Samples.Fractal/` |
+| 4 | Sine construction | Unblocked except labels, which want text |
 | 2 | Spring–mass–gravity | **Text** |
-| 5 | Fourier wrapping | **Text**; Catmull-Rom |
-| 6 | Mandelbrot / Julia | **GPU provider + external-texture IImage** |
+| 5 | Fourier wrapping | **Text** |
 
-Also generally wanted across these: node-tier `Opacity` (fading a group is
-currently impossible — ROADMAP puts it in M1 scope and it is absent), and the
-minimal scheduler for anything scripted rather than purely time-parametric.
+Everything the first three needed has landed: Catmull-Rom splines, node-tier
+opacity and clip, the minimal scheduler, Tier-2 drawing conveniences, gradient
+trails, and the GPU surface provider with external-texture interop.
+
+Text is now the only thing standing between this list and completion.
+
+## What the built samples changed
+
+The programme is earning its place. Findings so far, each from an author who met
+the API cold and none of which a test caught:
+
+- Circles did not exist. Two samples independently hand-rolled the same kappa
+  cubics before Tier-2 conveniences shipped.
+- Trails that fade along their length did not exist. Both samples wrote the same
+  per-segment loop, and both were **visibly beading at every join** in output that
+  had already been reviewed and accepted. `DrawGradientPolyline` fixed it.
+- `GroupNode` was written in Appendix B.3 and did not exist.
+- A subtree could not be clipped from its parent; `Node2D.Clip` now does it.
+- A gradient ramp ending at `Color.Transparent` drags a grey bruise through a
+  halo, because stops interpolate unpremultiplied. The two spellings coincide
+  only for black, which is why it survives review on a dark background.
+- `ZIndex`'s doc comment prevented the trap this list deliberately set for the
+  pendulum, by saying plainly that it is a sibling sort. Documentation stopping a
+  design error before it happens is the cheapest win available.
+
+## Scope note on vector export
+
+Recorded because it changes how much the vector path has to carry: publication
+figures are plots and simple diagrams. Complex compositions will be rasterized to
+PNG deliberately, since the value of SVG and PDF for scientific figures is scale
+and simplicity rather than fidelity to an arbitrary composition. `Plus` blending
+and other raster-only constructs being unavailable in vector output is therefore
+expected rather than a defect, and `VectorPolicy.Raster` is the ordinary escape
+hatch, not a failure mode.

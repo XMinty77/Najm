@@ -107,7 +107,9 @@ ticks, then render once (§2.3).
 authoring a visual. Routing it through a multi-frame sink means computing a
 frame count by hand and discarding all but the last file.
 
-**Status:** Open.
+**Status:** Implemented, alongside the offline delivery slice. Every sample author
+since has used it as their inspection loop, which is the behaviour the entry
+predicted.
 
 ---
 
@@ -185,7 +187,9 @@ exception base type until something needs to catch Najm failures selectively.
 only signal available, and inventing a hierarchy now would be a public-surface
 commitment made on no evidence.
 
-**Status:** Open.
+**Status:** Implemented, in the sense that every slice since has followed it and
+no case has yet wanted a Najm-specific exception type. Revisit only if something
+needs to catch Najm failures selectively.
 
 ---
 
