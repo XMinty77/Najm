@@ -219,13 +219,16 @@ public sealed class SkiaDrawContext2D : DrawContext2DBase
             CoreImageSampling.Nearest => NearestSampling,
             _ => throw new ArgumentException("The image sampling mode is not defined.", nameof(sampling)),
         };
-        if (image is not SkiaImage skiaImage)
+        if (image is not ISkiaNativeImage skiaImage)
         {
             throw new ArgumentException(
                 "The image must originate from a compatible Skia backend.",
                 nameof(image));
         }
 
+        // Both kinds of image lower identically once the native handle is in hand: an immutable
+        // engine snapshot and an author's externally owned GL texture (DEVIATIONS 9) differ in who
+        // guarantees the pixels and for how long, not in how they are drawn.
         var source = skiaImage.GetNativeImage();
         var matrix = ToSkiaMatrix(imageToLocal);
         nativePaint.Reset();

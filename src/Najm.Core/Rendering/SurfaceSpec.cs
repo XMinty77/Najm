@@ -1,3 +1,5 @@
+using System.Numerics;
+
 namespace Najm.Core;
 
 /// <summary>
@@ -83,6 +85,52 @@ public readonly record struct SurfaceSpec
         return SampleCount == 1
             ? this
             : new SurfaceSpec(Width, Height, 1, ColorSpace);
+    }
+
+    /// <summary>
+    /// Returns the normalized specification used by a GPU provider, given the device's largest
+    /// supported surface sample count for this specification's color type.
+    /// </summary>
+    /// <param name="maxSampleCount">
+    /// The positive device maximum, as reported by the backend for the color type this
+    /// specification's <see cref="ColorSpace"/> lowers to.
+    /// </param>
+    /// <remarks>
+    /// <para>
+    /// A GPU target has a real multisample render-target axis, so unlike
+    /// <see cref="NormalizeForRaster"/> this does not collapse the count to one. It clamps the
+    /// request into <c>[1, maxSampleCount]</c> and then rounds <em>down</em> to a power of two.
+    /// </para>
+    /// <para>
+    /// Rounding down is what makes the normalized count truthful rather than merely legal. A
+    /// backend asked for an unsupported count silently supplies the smallest supported count above
+    /// it, so a request of three would be recorded as three and realized as four — and every
+    /// specification-equality predicate downstream (fast-path selection, target reuse) would then be
+    /// comparing a number no surface actually has. Every practical GL implementation exposes the
+    /// powers of two up to its maximum, so the largest power of two at or below the clamped request
+    /// is a count the device honors exactly. Clamping downward also means an over-large request
+    /// yields the best the device can do instead of failing surface creation.
+    /// </para>
+    /// <para>
+    /// The result is idempotent: normalizing an already-normalized specification returns it
+    /// unchanged, which is what lets a compositor build layer requests from an output's
+    /// specification and still compare like with like.
+    /// </para>
+    /// </remarks>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="maxSampleCount"/> is not positive.</exception>
+    /// <exception cref="InvalidOperationException">This is a zero-initialized invalid specification.</exception>
+    public SurfaceSpec NormalizeForGpu(int maxSampleCount)
+    {
+        EnsureValid();
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxSampleCount);
+
+        var clamped = SampleCount < maxSampleCount ? SampleCount : maxSampleCount;
+        var normalized = clamped <= 1
+            ? 1
+            : 1 << (31 - BitOperations.LeadingZeroCount((uint)clamped));
+        return normalized == SampleCount
+            ? this
+            : new SurfaceSpec(Width, Height, normalized, ColorSpace);
     }
 
     private void EnsureValid()

@@ -190,7 +190,7 @@ public sealed class SkiaCompositor : ICompositor
         var baseTransform = Matrix3x2.CreateScale(renderScale);
         var context = layerTarget.BeginPass(
             renderScale,
-            RenderCaps.SkiaSurface,
+            layerTarget.Caps,
             baseTransform,
             placement.DeviceOffset);
         context.Clear(layer.ClearColor);
@@ -246,7 +246,7 @@ public sealed class SkiaCompositor : ICompositor
     {
         var context = output.BeginPass(
             renderScale,
-            RenderCaps.SkiaSurface,
+            output.Caps,
             Matrix3x2.CreateScale(renderScale));
         context.Clear(layer.ClearColor);
         RenderTraverser.RenderLayer(layer, context, virtualResolution, renderScale);

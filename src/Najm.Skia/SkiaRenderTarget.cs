@@ -12,9 +12,15 @@ public sealed class SkiaRenderTarget : IRenderTarget
     private SkiaDrawContext2D? context;
 
     internal SkiaRenderTarget(SKSurface surface, SurfaceSpec surfaceSpec)
+        : this(surface, surfaceSpec, RenderCaps.SkiaSurface)
+    {
+    }
+
+    internal SkiaRenderTarget(SKSurface surface, SurfaceSpec surfaceSpec, RenderCaps caps)
     {
         this.surface = surface ?? throw new ArgumentNullException(nameof(surface));
         SurfaceSpec = surfaceSpec;
+        Caps = caps;
         Size = surfaceSpec.Size;
 
         // Held for the target's lifetime deliberately. SkiaSharp caches the managed canvas wrapper
@@ -30,6 +36,17 @@ public sealed class SkiaRenderTarget : IRenderTarget
 
     /// <inheritdoc />
     public SurfaceSpec SurfaceSpec { get; }
+
+    /// <summary>
+    /// Gets what the provider that created this target promises about it, stamped onto every pass.
+    /// </summary>
+    /// <remarks>
+    /// It is a per-target value rather than a constant because the same class backs both providers:
+    /// a raster surface is <see cref="RenderCaps.SkiaSurface"/> alone, a GPU surface adds
+    /// <see cref="RenderCaps.GpuBacked"/>, and a drawable holding a wrapped GL texture validates
+    /// exactly that flag at attach time.
+    /// </remarks>
+    internal RenderCaps Caps { get; }
 
     /// <inheritdoc />
     /// <remarks>
@@ -49,7 +66,7 @@ public sealed class SkiaRenderTarget : IRenderTarget
     public IDrawContext2D GetContext(float renderScale)
     {
         var baseTransform = Matrix3x2.CreateScale(renderScale);
-        return BeginPass(renderScale, RenderCaps.SkiaSurface, baseTransform);
+        return BeginPass(renderScale, Caps, baseTransform);
     }
 
     /// <inheritdoc />

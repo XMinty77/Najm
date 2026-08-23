@@ -5,7 +5,12 @@ using CorePixelFormat = Najm.Core.PixelFormat;
 namespace Najm.Skia;
 
 /// <summary>Owns an immutable Skia image snapshot and provides explicit pixel readback.</summary>
-public sealed class SkiaImage : IImage
+/// <remarks>
+/// This is the <em>immutable</em> kind of <see cref="IImage"/>: a snapshot whose pixels never
+/// change. The externally owned kind, whose pixels the author rewrites between draws, is
+/// <see cref="GlTextureImage"/>.
+/// </remarks>
+public sealed class SkiaImage : IImage, ISkiaNativeImage
 {
     private SKImage? image;
 
@@ -18,11 +23,15 @@ public sealed class SkiaImage : IImage
     /// <inheritdoc />
     public PixelSize Size { get; }
 
+    /// <summary>Gets the live native snapshot, throwing once this wrapper has been disposed.</summary>
     internal SKImage GetNativeImage()
     {
         ObjectDisposedException.ThrowIf(image is null, this);
         return image;
     }
+
+    /// <inheritdoc />
+    SKImage ISkiaNativeImage.GetNativeImage() => GetNativeImage();
 
     /// <inheritdoc />
     public unsafe void CopyPixels(Span<byte> destination, CorePixelFormat format)
