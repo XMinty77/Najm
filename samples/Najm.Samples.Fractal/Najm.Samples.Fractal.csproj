@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>Najm.Samples.Fractal</RootNamespace>
+    <IsPackable>false</IsPackable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/Najm.Core/Najm.Core.csproj" />
+    <ProjectReference Include="../../src/Najm.Skia/Najm.Skia.csproj" />
+    <ProjectReference Include="../../src/Najm.Utils/Najm.Utils.csproj" />
+  </ItemGroup>
+</Project>
