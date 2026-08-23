@@ -1,3 +1,5 @@
+using System.Numerics;
+
 namespace Najm.Core;
 
 /// <summary>Provides a Y-up world-coordinate layer framed by a two-dimensional camera.</summary>
@@ -76,9 +78,79 @@ public class WorldLayer2D : Layer
         }
     }
 
+    /// <summary>
+    /// Centers this layer's <see cref="Camera"/> on a world rectangle and zooms so the whole
+    /// rectangle fits the extent this layer frames.
+    /// </summary>
+    /// <param name="worldRect">The finite world rectangle to frame, with positive width and height.</param>
+    /// <remarks>
+    /// <para>
+    /// This is ARCHITECTURE Appendix B.2's one-argument <c>layer.Camera.FitRect(rect)</c>, moved to
+    /// the layer because the layer is what knows the extent. It forwards to
+    /// <see cref="Camera2D.FitRect(in Rect, in System.Numerics.Vector2)"/> and adds nothing else:
+    /// the fit rule, the rotation handling, and the centering are all that method's.
+    /// </para>
+    /// <para>
+    /// <strong>The extent is this layer's, not the scene's.</strong> A layer with a
+    /// <see cref="Layer.Viewport"/> frames that viewport's size; a full-frame layer frames
+    /// <see cref="Scene.VirtualResolution"/>. That is exactly the distinction
+    /// <see cref="RenderTraverser.ComputeLayerBase(Layer, in System.Numerics.Vector2, float)"/>
+    /// makes when it builds the camera's mapping, and fitting against anything else would frame a
+    /// rectangle the render then crops: a half-width viewport shown a full-frame fit sees the right
+    /// half of the rectangle disappear.
+    /// </para>
+    /// <para>
+    /// A full-frame layer therefore needs a scene to answer at all, and one that has none says so
+    /// rather than inventing a resolution. A viewport'd layer owns its extent outright and needs no
+    /// scene.
+    /// </para>
+    /// </remarks>
+    /// <exception cref="InvalidOperationException">
+    /// This layer frames the whole frame and belongs to no scene, so no virtual resolution exists to
+    /// fit against.
+    /// </exception>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// The rectangle is degenerate or not finite, or the resulting zoom is not finite and greater
+    /// than zero.
+    /// </exception>
+    public void FitRect(in Rect worldRect) => camera.FitRect(worldRect, FramedExtent);
+
     /// <inheritdoc />
     public sealed override bool YAxisPointsUp => true;
 
     /// <inheritdoc />
     protected sealed override Node RootNode => Root;
+
+    /// <summary>
+    /// Gets the extent this layer's camera frames: its viewport's size when it has one, and its
+    /// scene's virtual resolution otherwise.
+    /// </summary>
+    /// <remarks>
+    /// The scene is resolved from the stack that owns this layer rather than from attachment, so
+    /// the answer is the same before load as after it — an author who builds a scene's layers in a
+    /// constructor and frames them there gets the same extent the render will use.
+    /// </remarks>
+    /// <exception cref="InvalidOperationException">
+    /// The extent would have to come from a scene and this layer has none.
+    /// </exception>
+    private Vector2 FramedExtent
+    {
+        get
+        {
+            if (Viewport is { } viewport)
+            {
+                return new Vector2(viewport.Width, viewport.Height);
+            }
+
+            var scene = AttachedScene ?? OwnerStack?.Owner ?? ReservationStack?.Owner;
+            return scene is not null
+                ? scene.VirtualResolution
+                : throw new InvalidOperationException(
+                    "WorldLayer2D.FitRect frames this layer's extent, and a full-frame layer's " +
+                    "extent is its scene's VirtualResolution. This layer belongs to no scene, so " +
+                    "there is no resolution to fit against: add the layer to a scene first, give " +
+                    "it a Viewport, or call Camera.FitRect(rect, virtualResolution) with the " +
+                    "extent you mean.");
+        }
+    }
 }

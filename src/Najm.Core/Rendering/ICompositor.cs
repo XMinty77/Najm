@@ -46,9 +46,21 @@ public interface ICompositor : IDisposable
     /// </param>
     /// <param name="renderScale">The finite, positive virtual-to-device pixel scale.</param>
     /// <remarks>
+    /// <para>
     /// The documented shape of this member carries no virtual resolution. Najm passes it because
     /// the compositor needs it in three places a backend cannot recover on its own: the traverser
     /// call, full-frame target sizing, and mapping a virtual-space viewport rect to device pixels.
+    /// </para>
+    /// <para>
+    /// <strong>Placement.</strong> The fitted frame is <em>centred</em> on the output — see
+    /// <see cref="FramePlacement"/> — so an output whose aspect differs from the scene's carries
+    /// equal bars on the limiting axis rather than anchoring the content at one corner. An
+    /// implementation derives the offset from <paramref name="virtualResolution"/>,
+    /// <paramref name="renderScale"/>, and the output's own size; it is not passed, because it is
+    /// exactly determined by the three things that are. Bar pixels are left untouched: §5.1 makes
+    /// bar color a host concern, so a compositor that filled them would be answering a question it
+    /// was not asked.
+    /// </para>
     /// </remarks>
     /// <exception cref="ArgumentNullException">
     /// <paramref name="layers"/> or <paramref name="output"/> is null.

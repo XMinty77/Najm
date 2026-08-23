@@ -231,6 +231,12 @@ public sealed class Transform2D
     {
         localDirty = true;
         InvalidateWorldSubtree();
+
+        // A node's own subtree bounds are stated in its own local space and so do not move when it
+        // does; what moves is this subtree's contribution to the parent's aggregate. Invalidating
+        // from the parent rather than from the owner is therefore both correct and one recompute
+        // cheaper (Node2D.SubtreeVisualBounds).
+        (owner.Parent as Node2D)?.InvalidateSubtreeBounds();
     }
 
     private static void EnsureFinite(Vector2 value, string parameterName, string label)

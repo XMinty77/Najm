@@ -1,3 +1,4 @@
+using System.Numerics;
 using Najm.Core;
 using SkiaSharp;
 
@@ -12,6 +13,7 @@ public sealed class OfflineDeliveryTests
 {
     private const string Black = "000000ff";
     private const string Red = "ff0000ff";
+    private const string Transparent = "00000000";
 
     [TestMethod]
     public void TwoFreshInstanceRunsProduceByteIdenticalFrames()
@@ -107,6 +109,93 @@ public sealed class OfflineDeliveryTests
     }
 
     [TestMethod]
+    public void AMismatchedTallOutputCentresTheContentBetweenTransparentBars()
+    {
+        // OfflineOptions.OutputSize promises a mismatched aspect is "letterboxed by the ordinary
+        // render-scale rule rather than stretched", and letterboxed means centred. The 8×4 scene
+        // fits an 8×8 target at scale min(8/8, 8/4) = 1, so 4 content rows leave 4 spare: 2 above
+        // and 2 below. Content therefore occupies rows 2 through 5.
+        var placement = FramePlacement.ResolveContentRect(
+            new Vector2(8f, 4f),
+            new PixelSize(8, 8),
+            FramePlacement.ResolveRenderScale(new Vector2(8f, 4f), new PixelSize(8, 8)));
+
+        Assert.AreEqual(new Rect(0f, 2f, 8f, 4f), placement);
+        Assert.AreEqual(
+            ExpectedLetterboxedFrame(8, 8, contentX: 0, contentY: 2, walkerColumn: 0),
+            RenderOneFrameHex(new PixelSize(8, 8)));
+    }
+
+    [TestMethod]
+    public void AMismatchedWideOutputCentresTheContentBetweenTransparentBars()
+    {
+        // 8×4 into 16×4 fits at min(16/8, 4/4) = 1, so 8 content columns leave 8 spare: 4 each
+        // side. Content occupies columns 4 through 11.
+        var placement = FramePlacement.ResolveContentRect(
+            new Vector2(8f, 4f),
+            new PixelSize(16, 4),
+            FramePlacement.ResolveRenderScale(new Vector2(8f, 4f), new PixelSize(16, 4)));
+
+        Assert.AreEqual(new Rect(4f, 0f, 8f, 4f), placement);
+        Assert.AreEqual(
+            ExpectedLetterboxedFrame(16, 4, contentX: 4, contentY: 0, walkerColumn: 0),
+            RenderOneFrameHex(new PixelSize(16, 4)));
+    }
+
+    [TestMethod]
+    public void AnUnevenLeftoverPutsTheExtraPixelInTheFarBar()
+    {
+        // 8×4 into 8×9 leaves 5 rows, which do not halve. floor(5 / 2) = 2 above, so 3 below: rows
+        // 0-1 are bar, rows 2-5 are content, rows 6-8 are bar.
+        Assert.AreEqual(
+            ExpectedLetterboxedFrame(8, 9, contentX: 0, contentY: 2, walkerColumn: 0),
+            RenderOneFrameHex(new PixelSize(8, 9)));
+
+        // And the same rule on the other axis: 15 − 8 = 7 leaves 3 columns left, 4 right.
+        Assert.AreEqual(
+            ExpectedLetterboxedFrame(15, 4, contentX: 3, contentY: 0, walkerColumn: 0),
+            RenderOneFrameHex(new PixelSize(15, 4)));
+    }
+
+    [TestMethod]
+    public void AViewportdLayerTravelsWithTheLetterboxedFrame()
+    {
+        // The content origin is applied once, to the frame, so a viewport'd layer keeps its place
+        // inside the frame rather than acquiring an offset of its own. Folding the origin into the
+        // layer's own placement offset instead would shift its staged content within its surface
+        // and crop it against that surface's edge.
+        var sink = new CapturingFrameSink();
+
+        SkiaOffline.Render(
+            () => new ViewportSplitScene(),
+            new OfflineOptions { Sink = sink, Fps = 60d, Frames = 1L, OutputSize = new PixelSize(8, 8) });
+
+        // Content rect (0,2,8,4): rows 0-1 and 6-7 are bar, and inside the content the base layer
+        // owns columns 0-3 while the viewport'd layer owns columns 4-7.
+        var expected = new string[8 * 8];
+        Array.Fill(expected, Transparent);
+        for (var row = 2; row < 6; row++)
+        {
+            for (var column = 0; column < 8; column++)
+            {
+                expected[(row * 8) + column] = column < 4 ? Black : Red;
+            }
+        }
+
+        Assert.AreEqual(string.Concat(expected), ToRgbaHex(sink.Frames[0], 8, 8));
+    }
+
+    [TestMethod]
+    public void AMatchedAspectOutputStillFillsEveryPixel()
+    {
+        // The regression guard for the centring: an output whose aspect already matches must gain
+        // no bars and shift by nothing, at any size.
+        Assert.AreEqual(
+            ExpectedLetterboxedFrame(8, 4, contentX: 0, contentY: 0, walkerColumn: 0),
+            RenderOneFrameHex(new PixelSize(8, 4)));
+    }
+
+    [TestMethod]
     public void ThePngSequenceSinkWritesZeroPaddedNumberedFrames()
     {
         using var scratch = new ScratchDirectory();
@@ -152,6 +241,63 @@ public sealed class OfflineDeliveryTests
             $"The mismatch must be reported concretely, but the message was '{failure.Message}'.");
         Assert.ThrowsExactly<ObjectDisposedException>(lease.Dispose);
         Assert.IsEmpty(Directory.GetFiles(scratch.Path));
+    }
+
+    /// <summary>
+    /// Renders output frame 0 of the 8×4 fixture into one explicit output size and returns its
+    /// pixels as RGBA hex.
+    /// </summary>
+    /// <remarks>
+    /// Frame 0 is the render after tick 0, so the walker sits in column 0 of the scene's own top
+    /// row wherever that row lands on the output.
+    /// </remarks>
+    private static string RenderOneFrameHex(PixelSize outputSize)
+    {
+        var sink = new CapturingFrameSink();
+
+        SkiaOffline.Render(
+            () => new WalkingPixelScene(),
+            new OfflineOptions { Sink = sink, Fps = 60d, Frames = 1L, OutputSize = outputSize });
+
+        Assert.AreEqual(outputSize.Width, sink.Info.Width);
+        Assert.AreEqual(outputSize.Height, sink.Info.Height);
+        Assert.HasCount(1, sink.Frames);
+        return ToRgbaHex(sink.Frames[0], outputSize.Width, outputSize.Height);
+    }
+
+    /// <summary>
+    /// The expected output: transparent everywhere outside the content rect, the fixture's opaque
+    /// black inside it, and the walker's red pixel at the content rect's own top-left corner offset
+    /// by its column.
+    /// </summary>
+    private static string ExpectedLetterboxedFrame(
+        int outputWidth,
+        int outputHeight,
+        int contentX,
+        int contentY,
+        int walkerColumn)
+    {
+        const int contentWidth = 8;
+        const int contentHeight = 4;
+
+        var pixels = new string[outputWidth * outputHeight];
+        Array.Fill(pixels, Transparent);
+        for (var y = 0; y < contentHeight; y++)
+        {
+            for (var x = 0; x < contentWidth; x++)
+            {
+                var isWalker = y == 0 && x == walkerColumn;
+                pixels[((contentY + y) * outputWidth) + contentX + x] = isWalker ? Red : Black;
+            }
+        }
+
+        return string.Concat(pixels);
+    }
+
+    private static string ToRgbaHex(byte[] pixels, int width, int height)
+    {
+        Assert.HasCount(width * height * 4, pixels, "The frame is not four bytes per pixel.");
+        return Convert.ToHexString(pixels).ToLowerInvariant();
     }
 
     /// <summary>

@@ -96,6 +96,8 @@ public sealed class SkiaCompositor : ICompositor
         var soloLayer = forceCanonicalPath ? null : FindSingleLayerFastPathLayer(layers, target, frameSize);
         if (soloLayer is not null)
         {
+            // FP-1 requires the frame to cover the output exactly, so its content origin is the
+            // output origin and there is nothing to centre.
             RenderToOutputDirectly(soloLayer, target, virtualResolution, renderScale);
             usedFastPath = true;
         }
@@ -144,6 +146,13 @@ public sealed class SkiaCompositor : ICompositor
         accumulationTarget.RestoreBaseline();
         accumulationTarget.NativeCanvas.Clear(SKColors.Transparent);
 
+        // Where the fitted frame sits on an output whose aspect differs from the scene's. The
+        // accumulation surface is the output's size, not the frame's, so the whole frame — every
+        // layer, viewport'd or not — shifts by this one offset and the leftover stays as the
+        // transparent bars the clear above already laid down.
+        var contentOriginX = FramePlacement.ResolveContentOffset(output.Size.Width, frameSize.Width);
+        var contentOriginY = FramePlacement.ResolveContentOffset(output.Size.Height, frameSize.Height);
+
         for (var index = 0; index < layers.Count; index++)
         {
             var layer = layers[index];
@@ -157,7 +166,13 @@ public sealed class SkiaCompositor : ICompositor
             var placement = ResolvePlacement(layer, frameSize, renderScale);
             var layerTarget = AcquireLayerTarget(layer, placement, output.SurfaceSpec);
             StageLayer(layerTarget, layer, placement, virtualResolution, renderScale);
-            MergeIntoAccumulation(accumulationTarget, layerTarget, layer, placement);
+            MergeIntoAccumulation(
+                accumulationTarget,
+                layerTarget,
+                layer,
+                placement,
+                contentOriginX,
+                contentOriginY);
             merges++;
         }
 
@@ -206,6 +221,12 @@ public sealed class SkiaCompositor : ICompositor
     /// Merges one staged layer target into the accumulation surface with the layer's opacity and
     /// blend, placed at its device origin.
     /// </summary>
+    /// <param name="accumulationTarget">The output-sized surface every layer merges into.</param>
+    /// <param name="layerTarget">The staged layer to merge.</param>
+    /// <param name="layer">The layer supplying the opacity and blend of the merge.</param>
+    /// <param name="placement">Where this layer sits within the frame, in whole device pixels.</param>
+    /// <param name="contentOriginX">Where the frame's left edge sits on the output, in pixels.</param>
+    /// <param name="contentOriginY">Where the frame's top edge sits on the output, in pixels.</param>
     /// <remarks>
     /// Opacity rides the paint's alpha and blend rides the paint's blend mode, which is exactly the
     /// group semantics the architecture gives a layer: the whole staged layer is attenuated and
@@ -216,15 +237,22 @@ public sealed class SkiaCompositor : ICompositor
         SkiaRenderTarget accumulationTarget,
         SkiaRenderTarget layerTarget,
         Layer layer,
-        in Placement placement)
+        in Placement placement,
+        int contentOriginX,
+        int contentOriginY)
     {
         mergePaint.Reset();
         mergePaint.BlendMode = SkiaDrawContext2D.ToSkiaBlendMode(layer.Blend);
         mergePaint.ColorF = new SKColorF(0f, 0f, 0f, layer.Opacity);
+
+        // Frame-relative placement plus the frame's own origin on the output. The two are kept
+        // apart on purpose: Placement.DeviceOffset is the inverse of the placement the staged pass
+        // renders through, and folding the content origin into it would shift the layer's content
+        // within its own surface and then shift it back, cropping it against the surface edge.
         accumulationTarget.NativeCanvas.DrawSurface(
             layerTarget.NativeSurface,
-            placement.X,
-            placement.Y,
+            placement.X + contentOriginX,
+            placement.Y + contentOriginY,
             mergePaint);
     }
 

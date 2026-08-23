@@ -10,6 +10,9 @@ public sealed class LayerStack : IReadOnlyList<Layer>
 
     internal LayerStack(Scene owner) => this.owner = owner;
 
+    /// <summary>Gets the scene this stack belongs to, whatever the scene's lifecycle state.</summary>
+    internal Scene Owner => owner;
+
     /// <inheritdoc />
     public Layer this[int index] => items[index];
 

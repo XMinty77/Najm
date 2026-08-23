@@ -102,6 +102,54 @@ internal sealed class EncoderProbeScene : Scene
     }
 }
 
+/// <summary>
+/// An 8×4 scene whose right half is painted by a viewport'd layer rather than by the base one.
+/// </summary>
+/// <remarks>
+/// The fixture exists to prove that a viewport'd layer travels with the frame when the frame is
+/// letterboxed. Both layers paint nothing but their clear color, so every output pixel is decided
+/// by placement alone and any drift shows up as a whole misplaced block.
+/// </remarks>
+internal sealed class ViewportSplitScene : Scene
+{
+    internal ViewportSplitScene()
+    {
+        VirtualResolution = new Vector2(8f, 4f);
+        Layers.Add(new ScreenLayer { ClearColor = DeliveryColors.OpaqueBlack });
+        Layers.Add(new ScreenLayer
+        {
+            ClearColor = DeliveryColors.OpaqueRed,
+            Viewport = new Rect(4f, 0f, 4f, 4f),
+        });
+    }
+}
+
+/// <summary>Keeps every delivered frame's raw bytes so a test can read individual pixels.</summary>
+/// <remarks>
+/// The hashing sink proves frames are identical; this one proves what is <em>in</em> them. It copies
+/// out of the lease rather than holding it, because the lease returns to the pool on disposal.
+/// </remarks>
+internal sealed class CapturingFrameSink : IFrameSink
+{
+    internal List<byte[]> Frames { get; } = [];
+
+    internal FrameStreamInfo Info { get; private set; }
+
+    public void Begin(in FrameStreamInfo info) => Info = info;
+
+    public void Submit(long frame, PixelFrameLease pixels)
+    {
+        using (pixels)
+        {
+            Frames.Add(pixels.Pixels.ToArray());
+        }
+    }
+
+    public void End()
+    {
+    }
+}
+
 /// <summary>The colors the delivery fixtures paint with.</summary>
 internal static class DeliveryColors
 {

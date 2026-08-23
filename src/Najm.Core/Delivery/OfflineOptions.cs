@@ -113,9 +113,19 @@ public sealed class OfflineOptions
 
     /// <summary>Gets an explicit output size, or null to derive one from <see cref="Scale"/>.</summary>
     /// <remarks>
+    /// <para>
     /// <strong>Precedence.</strong> An explicit size wins over <see cref="Scale"/>. A size whose
     /// aspect differs from the scene's virtual resolution is letterboxed by the ordinary render-scale
     /// rule rather than stretched.
+    /// </para>
+    /// <para>
+    /// <strong>Letterboxed means centred.</strong> The scene is fitted at the largest uniform scale
+    /// that puts the whole virtual frame inside this size, and the fitted content rect is then
+    /// centred in it — see <see cref="FramePlacement"/>, which states the offset rule and where the
+    /// odd leftover pixel goes. The bars are left transparent: §5.1 makes bar color a host concern
+    /// (<c>HostOptions.BarColor</c>) and an offline run has no host, so a color chosen here would be
+    /// baked into files whose real background is decided later.
+    /// </para>
     /// </remarks>
     public PixelSize? OutputSize { get; init; }
 

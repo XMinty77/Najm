@@ -108,7 +108,7 @@ public sealed class RenderSeamTests
     }
 
     [TestMethod]
-    public void BoundsDefaultToEmptyAndChainThroughGeometry()
+    public void PerNodeBoundsDefaultToEmptyAndChainThroughGeometry()
     {
         var plain = new Node2D();
 
@@ -128,6 +128,29 @@ public sealed class RenderSeamTests
         Assert.AreEqual(new Rect(0f, 0f, 10f, 10f), expanded.GeometryBounds);
         Assert.AreEqual(expanded.GeometryBounds, expanded.HitBounds);
         Assert.AreEqual(new Rect(-1f, -1f, 12f, 12f), expanded.VisualBounds);
+
+        // A childless node's aggregates are its own declarations: the split below only shows up
+        // once something hangs beneath it.
+        Assert.AreEqual(expanded.GeometryBounds, expanded.SubtreeGeometryBounds);
+        Assert.AreEqual(expanded.HitBounds, expanded.SubtreeHitBounds);
+        Assert.AreEqual(expanded.VisualBounds, expanded.SubtreeVisualBounds);
+    }
+
+    [TestMethod]
+    public void TheSubtreeAggregateCoversDescendantsWhereThePerNodeDeclarationDoesNot()
+    {
+        // §6.6 calls visual bounds "the conservative visible output of the node and descendants"
+        // and gives each of the three a subtree aggregate. The declaration is the node's own —
+        // an override cannot speak for children it has never seen — and the aggregate is the
+        // node-and-descendants value §6.7 must size an isolation bracket from. Sizing a bracket
+        // from the declaration would clip everything the child paints outside the parent.
+        var parent = new ExpandedDrawable(new Rect(0f, 0f, 10f, 10f));
+        parent.Add(new MeasuredDrawable(new Rect(0f, 0f, 4f, 4f)) { Position = new Vector2(30f, 0f) });
+
+        Assert.AreEqual(new Rect(-1f, -1f, 12f, 12f), parent.VisualBounds);
+        Assert.AreEqual(new Rect(-1f, -1f, 35f, 12f), parent.SubtreeVisualBounds);
+        Assert.AreEqual(new Rect(0f, 0f, 34f, 10f), parent.SubtreeGeometryBounds);
+        Assert.AreEqual(new Rect(0f, 0f, 34f, 10f), parent.SubtreeHitBounds);
     }
 
     private sealed class RecordingNode(string name, List<string> updates) : Node2D

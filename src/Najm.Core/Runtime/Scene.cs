@@ -201,6 +201,16 @@ public class Scene
     /// <see cref="Render(IRenderTarget)"/> composites: a layer's <see cref="Layer.ClearColor"/> is
     /// content that fills its region, and its opacity and blend apply to the whole layer as a group.
     /// </para>
+    /// <para>
+    /// <strong>Placement is the caller's.</strong> This path never letterboxes: the context arrived
+    /// with a pass already begun, and where on the surface that pass paints is decided by the base
+    /// transform the caller installed. That is not a disagreement with
+    /// <see cref="Render(IRenderTarget)"/>, which centres the fitted frame per
+    /// <see cref="FramePlacement"/>; it is the same rule applied by whoever owns the surface. A
+    /// caller that wants the composited path's placement asks
+    /// <see cref="FramePlacement.ResolveContentRect(in Vector2, PixelSize, float)"/> for it and
+    /// folds the origin into the transform it begins the pass with.
+    /// </para>
     /// <para>Rendering is idempotent, exactly as <see cref="Render(IRenderTarget)"/> is.</para>
     /// </remarks>
     /// <exception cref="ArgumentNullException"><paramref name="context"/> is null.</exception>
@@ -526,8 +536,12 @@ public class Scene
     /// <summary>
     /// Returns the virtual-to-device pixel scale for one output size: the largest uniform scale
     /// that fits <see cref="VirtualResolution"/> inside it, matching the aspect-preserving letterbox
-    /// the host applies around the content rect.
+    /// the compositor centres the content rect within.
     /// </summary>
+    /// <remarks>
+    /// The rule lives in <see cref="FramePlacement"/>, which the compositor also places the content
+    /// rect with, so the scale and the placement cannot disagree about where the frame lands.
+    /// </remarks>
     private float ResolveRenderScale(PixelSize size)
     {
         if (size.IsEmpty)
@@ -535,15 +549,7 @@ public class Scene
             throw new InvalidOperationException("A render target must report a positive pixel size.");
         }
 
-        var scale = MathF.Min(size.Width / virtualResolution.X, size.Height / virtualResolution.Y);
-        if (!float.IsFinite(scale) || scale <= 0f)
-        {
-            throw new InvalidOperationException(
-                $"A {size.Width}×{size.Height} target and a {virtualResolution.X}×{virtualResolution.Y} " +
-                "virtual resolution do not yield a finite, positive render scale.");
-        }
-
-        return scale;
+        return FramePlacement.ResolveRenderScale(virtualResolution, size);
     }
 
     private void EnsureRenderable(string operation)

@@ -22,6 +22,117 @@ public sealed class WorldLayer2DTests
     }
 
     [TestMethod]
+    public void TheOneArgumentFitRectFramesTheScenesVirtualResolution()
+    {
+        // ARCHITECTURE Appendix B.2 writes layer.Camera.FitRect(rect) with one argument. The
+        // convenience lives on the layer because the layer is what can reach the extent; the fit
+        // itself is still Camera2D's.
+        var scene = new Scene { VirtualResolution = new Vector2(800f, 600f) };
+        var layer = scene.Layers.Add(new WorldLayer2D());
+
+        layer.FitRect(new Rect(-10f, -10f, 20f, 20f));
+
+        // min(800/20, 600/20) = 30, centred on the rectangle's own centre.
+        Assert.AreEqual(30f, layer.Camera.Zoom, 1e-4f);
+        Assert.AreEqual(Vector2.Zero, layer.Camera.Position);
+
+        // It reads the scene rather than a constant: a different resolution fits differently.
+        var wider = new Scene { VirtualResolution = new Vector2(1920f, 1080f) };
+        var widerLayer = wider.Layers.Add(new WorldLayer2D());
+
+        widerLayer.FitRect(new Rect(-10f, -10f, 20f, 20f));
+
+        Assert.AreEqual(54f, widerLayer.Camera.Zoom, 1e-4f);
+    }
+
+    [TestMethod]
+    public void TheOneArgumentFitRectFramesAViewportRatherThanTheFrame()
+    {
+        // DEVIATIONS entry 7's warning, and RenderTraverser.ComputeLayerBase's rule: the extent a
+        // viewport'd layer frames is its viewport. Fitting against the scene instead would frame a
+        // rectangle the render then crops to a quarter of its width.
+        var scene = new Scene { VirtualResolution = new Vector2(800f, 600f) };
+        var layer = scene.Layers.Add(new WorldLayer2D
+        {
+            Viewport = new Rect(100f, 50f, 200f, 150f),
+        });
+
+        layer.FitRect(new Rect(-10f, -10f, 20f, 20f));
+
+        // min(200/20, 150/20) = 7.5, a quarter of the 30 the full frame would have given.
+        Assert.AreEqual(7.5f, layer.Camera.Zoom, 1e-4f);
+        Assert.AreEqual(Vector2.Zero, layer.Camera.Position);
+    }
+
+    [TestMethod]
+    public void TheFullFrameAndViewportFitsDisagreeOnTheSameScene()
+    {
+        var scene = new Scene { VirtualResolution = new Vector2(800f, 600f) };
+        var full = scene.Layers.Add(new WorldLayer2D());
+        var cropped = scene.Layers.Add(new WorldLayer2D { Viewport = new Rect(0f, 0f, 200f, 150f) });
+        var rect = new Rect(0f, 0f, 40f, 10f);
+
+        full.FitRect(rect);
+        cropped.FitRect(rect);
+
+        // min(800/40, 600/10) = 20 against the frame; min(200/40, 150/10) = 5 against the viewport.
+        Assert.AreEqual(20f, full.Camera.Zoom, 1e-4f);
+        Assert.AreEqual(5f, cropped.Camera.Zoom, 1e-4f);
+        Assert.AreNotEqual(full.Camera.Zoom, cropped.Camera.Zoom);
+
+        // Both are exactly the two-argument call with the extent the layer frames, and nothing else.
+        var twin = new WorldLayer2D();
+        twin.Camera.FitRect(rect, new Vector2(200f, 150f));
+        Assert.AreEqual(twin.Camera.Zoom, cropped.Camera.Zoom);
+        Assert.AreEqual(twin.Camera.Position, cropped.Camera.Position);
+    }
+
+    [TestMethod]
+    public void TheOneArgumentFitRectWorksBeforeTheSceneLoadsAndAfterItDoes()
+    {
+        var scene = new Scene { VirtualResolution = new Vector2(800f, 600f) };
+        var layer = scene.Layers.Add(new WorldLayer2D());
+        var rect = new Rect(-10f, -10f, 20f, 20f);
+
+        layer.FitRect(rect);
+        var beforeLoad = layer.Camera.Zoom;
+
+        scene.Load(TestEnvironment.Stub());
+        layer.Camera.Zoom = 1f;
+        layer.FitRect(rect);
+
+        Assert.AreEqual(30f, beforeLoad, 1e-4f);
+        Assert.AreEqual(beforeLoad, layer.Camera.Zoom);
+    }
+
+    [TestMethod]
+    public void AFullFrameLayerWithNoSceneRefusesToInventAResolution()
+    {
+        var orphan = new WorldLayer2D();
+
+        var failure = Assert.ThrowsExactly<InvalidOperationException>(
+            () => orphan.FitRect(new Rect(0f, 0f, 4f, 2f)));
+
+        Assert.Contains("VirtualResolution", failure.Message, StringComparison.Ordinal);
+
+        // A viewport'd layer owns its extent outright, so it has an honest answer without a scene.
+        var viewported = new WorldLayer2D { Viewport = new Rect(0f, 0f, 40f, 20f) };
+
+        viewported.FitRect(new Rect(0f, 0f, 4f, 2f));
+
+        Assert.AreEqual(10f, viewported.Camera.Zoom, 1e-4f);
+    }
+
+    [TestMethod]
+    public void TheOneArgumentFitRectRejectsADegenerateRectangle()
+    {
+        var scene = new Scene();
+        var layer = scene.Layers.Add(new WorldLayer2D());
+
+        Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => layer.FitRect(new Rect(0f, 0f, 4f, 0f)));
+    }
+
+    [TestMethod]
     public void TheWorldLayerReportsAYUpCoordinateSpace()
     {
         Assert.IsTrue(new WorldLayer2D().YAxisPointsUp);
