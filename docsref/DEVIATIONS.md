@@ -272,7 +272,24 @@ Consequence for the realization: wrap once and cache it, invalidating only when 
 reallocated. Re-wrapping per frame would allocate per frame and break the zero-allocation
 budget for no benefit, since a stable-size texture keeps its id.
 
-**Status:** Open — decided, not yet implemented. Belongs with the GPU surface provider.
+**Status:** Implemented, alongside the GPU surface provider.
+
+Three things measured during implementation refine the entry. The release callback fires
+when Skia's last reference to the texture drops — for an undrawn or already-flushed image
+that is at dispose, not at a later flush — so the safe ordering is dispose, flush, then
+delete. `GRBackendTexture` may be disposed immediately after the wrap, because Skia copies
+it. And `SKImage.FromAdoptedTexture`, the transfer-ownership alternative, failed to sample
+correctly even on first use and is avoided.
+
+One correction to an assumption made elsewhere: drawing a GPU-backed wrapped image on a CPU
+raster context does **not** throw and does **not** draw nothing. Skia reads the texture back
+and draws it correctly. `RenderCaps.GpuBacked` therefore guards a silent per-draw download,
+not a correctness failure — a weaker guarantee than "fails fast on a non-GPU target" implies,
+and worth knowing before relying on the cap to catch a misconfiguration.
+
+A caution for the hydrogen integration: reallocating a texture under a **new** id leaves the
+old wrap cached against a stale image. `ReleaseGlTexture(id)` exists for that, and any resize
+path that regenerates names rather than reusing them must call it.
 
 ---
 
