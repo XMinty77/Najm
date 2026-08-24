@@ -71,7 +71,7 @@ More detail, including the scenes planned next, is in [SAMPLES.md](SAMPLES.md).
 ### Requirements
 
 - Linux (the currently pinned native Skia and HarfBuzz assets target Linux)
-- the exact .NET SDK version in [`global.json`](global.json), currently .NET 10.0.110
+- the exact .NET SDK version in [`global.json`](global.json), currently .NET 10.0.111
 - FFmpeg on `PATH` to render sample videos
 - EGL/OpenGL support for the GPU and fractal paths. A software renderer such as llvmpipe is sufficient for the headless sample.
 
