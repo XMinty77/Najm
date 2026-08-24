@@ -1,4 +1,5 @@
 using System.Numerics;
+using Najm.Core.Text;
 using Najm.Utils;
 
 namespace Najm.Core;
@@ -13,7 +14,8 @@ namespace Najm.Core;
 /// </para>
 /// <para>
 /// <strong>Two tiers, one interface.</strong> <see cref="DrawPath"/>, <see cref="DrawImage"/>, and
-/// <see cref="Clear"/> are the Tier-1 primitives every backend lowers natively (ARCHITECTURE §7.1).
+/// <see cref="Clear"/> are the Tier-1 primitives every backend lowers natively (ARCHITECTURE §7.1),
+/// and so is <see cref="DrawText"/>, which alone among them has no portable default at all.
 /// The <c>Draw*</c> shape members below them are Tier-2 conveniences (§7.2): they are declared here
 /// because a portable drawable only ever sees this interface — <c>ctx.DrawCircle(...)</c> is the
 /// documented authoring form — but they are <em>implemented once</em>, in
@@ -56,6 +58,37 @@ public interface IDrawContext2D
     /// <param name="path">The path geometry and fill rule.</param>
     /// <param name="paint">The fill or stroke descriptor.</param>
     void DrawPath(PathBuilder path, in Paint paint);
+
+    /// <summary>Draws a finished text layout at the current origin.</summary>
+    /// <param name="layout">
+    /// The immutable layout to draw, produced by the environment's
+    /// <see cref="ITypesetter"/>. Its glyph positions are in its own reading frame, so the caller
+    /// installs whatever transform maps that frame into local coordinates — for a text node, the
+    /// anchor offset and the upright rule's flip (NAJM-TEXT I.9).
+    /// </param>
+    /// <param name="colorOverride">
+    /// A uniform color for every run, or null to use the layout's own
+    /// <see cref="ITextLayout.PaintTable"/>. This is how a node's color — including a color tween —
+    /// reaches the glyphs without re-typesetting them.
+    /// </param>
+    /// <remarks>
+    /// <para>
+    /// <strong>Tier 1, with no portable default</strong> (ARCHITECTURE §7.1). Every other Tier-2
+    /// convenience on this interface is implemented once in <see cref="DrawContext2DBase"/> in terms
+    /// of <see cref="DrawPath"/>; this one cannot be, because Core has no glyph rasterizer and
+    /// §12.1 forbids building a second one. Each backend lowers it natively.
+    /// </para>
+    /// <para>
+    /// The layout is borrowed and consumed synchronously. A backend may cache a native realization
+    /// of it in a side table of its own — the layout is immutable, so such a cache never goes stale
+    /// — but it must not store anything on the layout.
+    /// </para>
+    /// <para>
+    /// The overloads I.8 adds for fragment overlays and for on-path placement arrive with the
+    /// features that produce them; this is the flat, uniform case they generalize.
+    /// </para>
+    /// </remarks>
+    void DrawText(ITextLayout layout, Color? colorOverride = null);
 
     /// <summary>Draws an immutable image through an affine mapping.</summary>
     /// <param name="image">The borrowed source image, consumed synchronously.</param>

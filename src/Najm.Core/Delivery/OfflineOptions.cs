@@ -1,3 +1,5 @@
+using Najm.Core.Text;
+
 namespace Najm.Core;
 
 /// <summary>Configures one deterministic offline render.</summary>
@@ -18,6 +20,26 @@ public sealed class OfflineOptions
 
     /// <summary>Gets the sink every rendered frame is submitted to.</summary>
     public required IFrameSink Sink { get; init; }
+
+    /// <summary>
+    /// Gets the typesetter the rendered scene measures and draws text through, or null for the
+    /// fail-loud <see cref="NullTypesetter"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// An offline run has no host, so nothing else would ever put a real typesetter into the scene's
+    /// environment: without this option the loop builds an environment around the surface provider
+    /// alone and every text node in the scene fails at attach. That is a correct failure and a
+    /// useless one — a deterministic export of a figure with a caption on it is the ordinary case,
+    /// not an exotic one.
+    /// </para>
+    /// <para>
+    /// The default stays <see cref="NullTypesetter"/>, so a run that draws no text pulls in no text
+    /// assembly and an omission still reports itself by name rather than by a blank frame.
+    /// <c>Najm.Text.Typesetter</c> is the one implementation.
+    /// </para>
+    /// </remarks>
+    public ITypesetter? Typesetter { get; init; }
 
     /// <summary>Gets the fixed simulation and presentation rate. The default is 60.</summary>
     /// <remarks>

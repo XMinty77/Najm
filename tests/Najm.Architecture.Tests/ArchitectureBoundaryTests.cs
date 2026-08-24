@@ -21,10 +21,19 @@ public sealed class ArchitectureBoundaryTests
         AssertProjectReferences(
             "src/Najm.Text/Najm.Text.csproj",
             "src/Najm.Core/Najm.Core.csproj");
+
+        // §16: Lib depends on Core and Utils, and on nothing else — not on a backend, not on the
+        // text assembly. That is what forces NAJM-TEXT I.1's authority pin rather than merely
+        // asking for it: the only text-shaped things a TextNode in here can reach are Core's
+        // ITypesetter capability and Core's Tier-1 DrawText op, so a node physically cannot shape.
+        AssertProjectReferences(
+            "src/Najm.Lib/Najm.Lib.csproj",
+            "src/Najm.Core/Najm.Core.csproj",
+            "src/Najm.Utils/Najm.Utils.csproj");
     }
 
     [TestMethod]
-    public void UtilsAndCoreDoNotTakeBackendPackageDependencies()
+    public void PortableProjectsDoNotTakeBackendPackageDependencies()
     {
         var forbiddenPrefixes = new[] { "SkiaSharp", "Silk.NET", "HarfBuzzSharp", "CSharpMath" };
 
@@ -32,6 +41,7 @@ public sealed class ArchitectureBoundaryTests
                  {
                      "src/Najm.Utils/Najm.Utils.csproj",
                      "src/Najm.Core/Najm.Core.csproj",
+                     "src/Najm.Lib/Najm.Lib.csproj",
                  })
         {
             var document = XDocument.Load(Path.Combine(RepositoryRoot, project));
@@ -86,6 +96,32 @@ public sealed class ArchitectureBoundaryTests
         }
 
         AssertLockedGraphExcludes(project, forbiddenPrefixes);
+    }
+
+    /// <summary>
+    /// The mechanism library takes no package dependency at all, not merely no backend one.
+    /// </summary>
+    /// <remarks>
+    /// Stronger than the forbidden-prefix check above and deliberately so: §16 gives
+    /// <c>Najm.Lib</c> exactly two project references and nothing else, so any package appearing
+    /// here is a boundary decision that should be made on purpose rather than noticed later. A
+    /// prefix list only catches the backends somebody already thought of.
+    /// </remarks>
+    [TestMethod]
+    public void LibTakesNoPackageDependencyAtAll()
+    {
+        const string Project = "src/Najm.Lib/Najm.Lib.csproj";
+        var document = XDocument.Load(Path.Combine(RepositoryRoot, Project));
+        var packages = document
+            .Descendants("PackageReference")
+            .Select(element => (string?)element.Attribute("Include"))
+            .Where(name => name is not null)
+            .ToArray();
+
+        Assert.IsEmpty(
+            packages,
+            $"Project '{Project}' must have no package references; it declares " +
+            $"{string.Join(", ", packages)}.");
     }
 
     private static void AssertLockedGraphExcludes(string project, string[] forbiddenPrefixes)

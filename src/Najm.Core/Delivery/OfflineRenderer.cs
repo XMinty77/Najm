@@ -1,4 +1,5 @@
 using System.Numerics;
+using Najm.Core.Text;
 
 namespace Najm.Core;
 
@@ -10,11 +11,11 @@ namespace Najm.Core;
 /// serves any backend and Core keeps no rendering dependency.
 /// </para>
 /// <para>
-/// The provider is the only capability an offline run needs, so the loop builds the scene's
-/// <see cref="SceneEnvironment"/> around it and lets Core's null objects supply the rest. That is
-/// the honest description of a deterministic export: it loads no assets it was not handed, it draws
-/// no text — <see cref="NullTypesetter"/> would say so loudly if a scene tried — and its audio is a
-/// cue list somebody else assembles, not sound.
+/// The loop builds the scene's <see cref="SceneEnvironment"/> around the injected provider and the
+/// injected typesetter, and lets Core's null objects supply the rest. That is the honest description
+/// of a deterministic export: it loads no assets it was not handed, its audio is a cue list somebody
+/// else assembles rather than sound, and it draws text only if it was given something to draw it
+/// with — <see cref="NullTypesetter"/> says so loudly, by name, if it was not.
 /// </para>
 /// <para>
 /// <strong>The timing contract.</strong> The clock is <see cref="ClockPolicy.Fixed(double)"/> at
@@ -73,7 +74,7 @@ public static class OfflineRenderer
         var frameCount = options.ResolveFrameCount();
         var framesPerSecond = options.Fps;
 
-        scene.Load(new SceneEnvironment(surfaces));
+        scene.Load(new SceneEnvironment(surfaces, typesetter: options.Typesetter));
         try
         {
             var size = ResolveOutputSize(scene.VirtualResolution, options.Scale, options.OutputSize);
@@ -117,6 +118,10 @@ public static class OfflineRenderer
     /// <param name="format">The pixel layout submitted to the sink.</param>
     /// <param name="sampleCount">The requested surface sample count.</param>
     /// <param name="colorSpace">The output surface's color-space tag.</param>
+    /// <param name="typesetter">
+    /// The typesetter the scene measures and draws text through, or null for the fail-loud
+    /// <see cref="NullTypesetter"/>. A still of a scene with a caption on it needs a real one.
+    /// </param>
     /// <returns>The number of ticks run before the render, which is <c>ceil(at × fps)</c>.</returns>
     /// <remarks>
     /// <para>
@@ -144,7 +149,8 @@ public static class OfflineRenderer
         float scale = 1f,
         PixelFormat format = PixelFormat.Rgba8888,
         int sampleCount = 1,
-        ColorSpace colorSpace = ColorSpace.Srgb)
+        ColorSpace colorSpace = ColorSpace.Srgb,
+        ITypesetter? typesetter = null)
     {
         ArgumentNullException.ThrowIfNull(scene);
         ArgumentNullException.ThrowIfNull(surfaces);
@@ -161,7 +167,7 @@ public static class OfflineRenderer
 
         var ticks = FixedStepTiming.TicksForStill(at, framesPerSecond);
 
-        scene.Load(new SceneEnvironment(surfaces));
+        scene.Load(new SceneEnvironment(surfaces, typesetter: typesetter));
         try
         {
             var size = ResolveOutputSize(scene.VirtualResolution, scale, outputSize: null);

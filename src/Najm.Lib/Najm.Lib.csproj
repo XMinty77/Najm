@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../Najm.Core/Najm.Core.csproj" />
+    <ProjectReference Include="../Najm.Utils/Najm.Utils.csproj" />
+  </ItemGroup>
+</Project>

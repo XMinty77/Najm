@@ -1,5 +1,6 @@
 using System.Numerics;
 using Najm.Core;
+using Najm.Core.Text;
 using Najm.Utils;
 
 namespace Najm.Skia.Tests.Rendering;
@@ -898,6 +899,10 @@ public sealed class NodeCompositionTests
         }
 
         public override void DrawPath(PathBuilder path, in Paint paint)
+        {
+        }
+
+        public override void DrawText(ITextLayout layout, Color? colorOverride = null)
         {
         }
 

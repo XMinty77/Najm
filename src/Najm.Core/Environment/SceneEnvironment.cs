@@ -1,3 +1,5 @@
+using Najm.Core.Text;
+
 namespace Najm.Core;
 
 /// <summary>The closed, typed set of capabilities a host gives one loaded scene.</summary>

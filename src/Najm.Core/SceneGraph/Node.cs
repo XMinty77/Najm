@@ -38,6 +38,22 @@ public abstract class Node
     /// <summary>Gets the owning layer while attached, or <see langword="null"/> while detached.</summary>
     public Layer? Layer => layer;
 
+    /// <summary>Gets the loaded scene this node belongs to, or null when it is not attached.</summary>
+    /// <remarks>
+    /// <para>
+    /// §6.6: capability access begins at attach, through <see cref="Core.Scene.Env"/>. This is the
+    /// node-side way there — a drawable that needs the typesetter, the asset store, or the render
+    /// caps reads them in <c>OnAttach</c> and caches what it found, rather than looking anything up
+    /// per frame.
+    /// </para>
+    /// <para>
+    /// It is deliberately a property and not a service locator: it reaches exactly one scene, the
+    /// one this node's layer is attached to, and a scene's capability set is closed (§4.2). An
+    /// embedded child scene sees its own environment through its own nodes and cannot see around it.
+    /// </para>
+    /// </remarks>
+    public Scene? Scene => layer?.AttachedScene;
+
     /// <summary>Gets or sets whether this node and its subtree participate in Update.</summary>
     public bool Enabled { get; set; } = true;
 

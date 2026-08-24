@@ -15,6 +15,16 @@
           "Microsoft.Testing.Extensions.TrxReport": "2.0.1"
         }
       },
+      "HarfBuzzSharp.NativeAssets.macOS": {
+        "type": "Transitive",
+        "resolved": "8.3.1.5",
+        "contentHash": "TWSbMOIBiGvCTnR2MUlmhnP92L7qwYmpDXSNOkYQUh6Iuc7W7Y3z/Q+X3N6scvbZbDmfbZjqbNUqDEz/JzpwBg=="
+      },
+      "HarfBuzzSharp.NativeAssets.Win32": {
+        "type": "Transitive",
+        "resolved": "8.3.1.5",
+        "contentHash": "p95FW4SwP50qD4cq6e2/P5DP7As6c6aQU5qHvsdCKorX5GFLHUMIx/zQgiLvB871xQrhdN24sZyMbCufnTHvsQ=="
+      },
       "Microsoft.ApplicationInsights": {
         "type": "Transitive",
         "resolved": "2.23.0",
@@ -168,6 +178,13 @@
           "Najm.Utils": "[1.0.0, )"
         }
       },
+      "najm.lib": {
+        "type": "Project",
+        "dependencies": {
+          "Najm.Core": "[1.0.0, )",
+          "Najm.Utils": "[1.0.0, )"
+        }
+      },
       "najm.skia": {
         "type": "Project",
         "dependencies": {
@@ -176,8 +193,32 @@
           "SkiaSharp.NativeAssets.Linux": "[3.119.4, )"
         }
       },
+      "najm.text": {
+        "type": "Project",
+        "dependencies": {
+          "HarfBuzzSharp": "[8.3.1.5, )",
+          "HarfBuzzSharp.NativeAssets.Linux": "[8.3.1.5, )",
+          "Najm.Core": "[1.0.0, )"
+        }
+      },
       "najm.utils": {
         "type": "Project"
+      },
+      "HarfBuzzSharp": {
+        "type": "CentralTransitive",
+        "requested": "[8.3.1.5, )",
+        "resolved": "8.3.1.5",
+        "contentHash": "K0+U7592Ne10BCuHZrZYIbaYUQy20CsYM9A3+Xjz3UpLPjs6nosbQtDYp2PueWJ7AQ5/htbyO8WqnUe+uf8AAQ==",
+        "dependencies": {
+          "HarfBuzzSharp.NativeAssets.Win32": "8.3.1.5",
+          "HarfBuzzSharp.NativeAssets.macOS": "8.3.1.5"
+        }
+      },
+      "HarfBuzzSharp.NativeAssets.Linux": {
+        "type": "CentralTransitive",
+        "requested": "[8.3.1.5, )",
+        "resolved": "8.3.1.5",
+        "contentHash": "Rvm05tL7QTNEGrhcrfvN/J5j7SGjGclp8J70JTQW4498U4+4cPC5yovn5V1l6ngSGufK6Ck47JVp6alYwhkGKg=="
       },
       "SkiaSharp": {
         "type": "CentralTransitive",

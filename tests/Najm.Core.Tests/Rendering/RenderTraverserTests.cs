@@ -1,5 +1,6 @@
 using System.Numerics;
 using Najm.Utils;
+using Najm.Core.Text;
 
 namespace Najm.Core.Tests.Rendering;
 
@@ -802,6 +803,8 @@ public sealed class RenderTraverserTests
         }
 
         public override void DrawPath(PathBuilder path, in Paint paint) => DrawCount++;
+
+        public override void DrawText(ITextLayout layout, Color? colorOverride = null) => DrawCount++;
 
         public override void DrawImage(IImage image, in Matrix3x2 imageToLocal, ImageSampling sampling = ImageSampling.Linear)
         {

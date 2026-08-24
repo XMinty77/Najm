@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <EnableMSTestRunner>true</EnableMSTestRunner>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="../TestAssemblyConfiguration.cs" Link="TestAssemblyConfiguration.cs" />
+    <PackageReference Include="MSTest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/Najm.Lib/Najm.Lib.csproj" />
+    <ProjectReference Include="../../src/Najm.Text/Najm.Text.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Microsoft.VisualStudio.TestTools.UnitTesting" />
+    <Using Include="Najm.Tests" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="../Shared/AllocationProbe.cs" Link="AllocationProbe.cs" />
+  </ItemGroup>
+</Project>

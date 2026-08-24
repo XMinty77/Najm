@@ -1,4 +1,5 @@
 using System.Numerics;
+using Najm.Core.Text;
 using Najm.Utils;
 
 namespace Najm.Core;
@@ -111,6 +112,14 @@ public abstract class DrawContext2DBase : IDrawContext2D
 
     /// <inheritdoc />
     public abstract void DrawPath(PathBuilder path, in Paint paint);
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// Abstract, and the only Tier-1 member with no portable default that could have been written
+    /// here even in principle: Core owns no glyph rasterizer, and ARCHITECTURE §12.1 forbids a
+    /// second text pipeline existing to supply one.
+    /// </remarks>
+    public abstract void DrawText(ITextLayout layout, Color? colorOverride = null);
 
     /// <inheritdoc />
     public abstract void DrawImage(

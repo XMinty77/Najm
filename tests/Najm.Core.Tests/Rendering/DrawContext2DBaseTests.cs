@@ -1,5 +1,6 @@
 using System.Numerics;
 using Najm.Utils;
+using Najm.Core.Text;
 
 namespace Najm.Core.Tests.Rendering;
 
@@ -243,6 +244,8 @@ public sealed class DrawContext2DBaseTests
     {
         internal int DrawPathCount { get; private set; }
 
+        internal int DrawTextCount { get; private set; }
+
         internal int OtherCallCount { get; private set; }
 
         public override SurfaceSpec SurfaceSpec { get; } = new(64, 64);
@@ -261,6 +264,11 @@ public sealed class DrawContext2DBaseTests
             DrawPathCount++;
             OnPath(path);
         }
+
+        // Tier 1 with no portable default, so no convenience routes through it and these tests
+        // never call it; counted anyway, because a convenience that started drawing text instead
+        // of a path would otherwise register as drawing nothing at all.
+        public override void DrawText(ITextLayout layout, Color? colorOverride = null) => DrawTextCount++;
 
         public override void DrawImage(
             IImage image,

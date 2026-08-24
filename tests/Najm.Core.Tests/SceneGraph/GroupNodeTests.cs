@@ -1,4 +1,6 @@
 using System.Numerics;
+using Najm.Core.Text;
+using Najm.Utils;
 
 namespace Najm.Core.Tests.SceneGraph;
 
@@ -108,6 +110,8 @@ public sealed class GroupNodeTests
     {
         internal int DrawPathCount { get; private set; }
 
+        internal int DrawTextCount { get; private set; }
+
         public override SurfaceSpec SurfaceSpec { get; } = new(16, 16);
 
         public override RenderCaps Caps => RenderCaps.None;
@@ -121,6 +125,10 @@ public sealed class GroupNodeTests
         }
 
         public override void DrawPath(PathBuilder path, in Paint paint) => DrawPathCount++;
+
+        // Tier 1 and unreachable from a GroupNode, which draws nothing; overridden because the
+        // base class declares it abstract, and counted so a stray call would be visible.
+        public override void DrawText(ITextLayout layout, Color? colorOverride = null) => DrawTextCount++;
 
         public override void DrawImage(
             IImage image,

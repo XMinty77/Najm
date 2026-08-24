@@ -1,5 +1,6 @@
 using System.Numerics;
 using Najm.Utils;
+using Najm.Core.Text;
 
 namespace Najm.Core.Tests.Rendering;
 
@@ -382,6 +383,8 @@ public sealed class GradientRunTests
     {
         internal int DrawPathCount { get; private set; }
 
+        internal int DrawTextCount { get; private set; }
+
         internal int OtherCallCount { get; private set; }
 
         public override SurfaceSpec SurfaceSpec { get; } = new(64, 64);
@@ -400,6 +403,8 @@ public sealed class GradientRunTests
             DrawPathCount++;
             OnPath(path, paint);
         }
+
+        public override void DrawText(ITextLayout layout, Color? colorOverride = null) => DrawTextCount++;
 
         public override void DrawImage(
             IImage image,

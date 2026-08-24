@@ -1,5 +1,6 @@
 using System.Numerics;
 using Najm.Utils;
+using Najm.Core.Text;
 
 namespace Najm.Core.Tests.Layers;
 
@@ -136,6 +137,8 @@ public sealed class LayerPresentationTests
         public override void Clear(Color color) => DrawCount++;
 
         public override void DrawPath(PathBuilder path, in Paint paint) => DrawCount++;
+
+        public override void DrawText(ITextLayout layout, Color? colorOverride = null) => DrawCount++;
 
         public override void DrawImage(
             IImage image,

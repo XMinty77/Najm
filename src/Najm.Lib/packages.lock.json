@@ -1,0 +1,16 @@
+{
+  "version": 2,
+  "dependencies": {
+    "net10.0": {
+      "najm.core": {
+        "type": "Project",
+        "dependencies": {
+          "Najm.Utils": "[1.0.0, )"
+        }
+      },
+      "najm.utils": {
+        "type": "Project"
+      }
+    }
+  }
+}

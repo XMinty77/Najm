@@ -1,6 +1,7 @@
 using System.Numerics;
 using System.Text;
 using Najm.Core;
+using Najm.Core.Text;
 using SkiaSharp;
 using CoreBlendMode = Najm.Core.BlendMode;
 using CoreBrush = Najm.Core.Brush;
@@ -22,7 +23,8 @@ namespace Najm.Skia;
 /// <summary>Lowers portable Tier-1 drawing commands onto a target-owned Skia canvas.</summary>
 /// <remarks>
 /// <para>
-/// Tier-1 only: this class lowers <c>Clear</c>, <c>DrawPath</c>, and <c>DrawImage</c>, and inherits
+/// Tier-1 only: this class lowers <c>Clear</c>, <c>DrawPath</c>, <c>DrawText</c>, and
+/// <c>DrawImage</c>, and inherits
 /// every Tier-2 convenience from <see cref="DrawContext2DBase"/> unchanged. ARCHITECTURE §7.2
 /// permits overriding one — <c>DrawCircle</c> onto <c>SKCanvas.DrawCircle</c> is the example it
 /// gives — and none is overridden here, deliberately: a native oval rasterizes differently from
@@ -202,6 +204,56 @@ public sealed class SkiaDrawContext2D : DrawContext2DBase
         LowerPath(path);
         StampPathPaint(paint);
         canvas.DrawPath(nativePath, nativePaint);
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// <para>
+    /// <strong>Two routes, one paint.</strong> On an ordinary raster target each run draws as a
+    /// positioned <c>SKTextBlob</c> — the native fast path, and the reason static text costs one
+    /// table lookup and one draw call per run per frame. On a vector target
+    /// (<see cref="RenderCaps.VectorTarget"/>) each run instead draws as its filled glyph outlines,
+    /// because ARCHITECTURE §7.6 requires publication output not to depend on a viewer having the
+    /// font installed. Both routes stamp the same fill paint, so the two agree to within
+    /// rasterization.
+    /// </para>
+    /// <para>
+    /// Nothing is written to the layout. The blob, the outline, and the native typeface behind them
+    /// live in <see cref="SkiaTextResources"/>, keyed by the portable handles — which is what keeps
+    /// <see cref="ITextLayout"/> free of backend objects (NAJM-TEXT I.4) and what makes a second
+    /// node showing the same string pay nothing at all.
+    /// </para>
+    /// </remarks>
+    public override void DrawText(ITextLayout layout, UtilsColor? colorOverride = null)
+    {
+        EnsureActive();
+        ArgumentNullException.ThrowIfNull(layout);
+
+        var runs = layout.Runs;
+        if (runs.Length == 0)
+        {
+            return;
+        }
+
+        var paints = layout.PaintTable;
+        var realization = SkiaTextResources.Realize(layout);
+        var toOutlines = (Caps & RenderCaps.VectorTarget) != 0;
+        for (var index = 0; index < runs.Length; index++)
+        {
+            var run = runs[index];
+            var color = colorOverride ?? paints[run.PaintIndex];
+            StampColor(color, SKBlendMode.SrcOver);
+            nativePaint.IsAntialias = true;
+            nativePaint.Style = SKPaintStyle.Fill;
+            if (toOutlines)
+            {
+                canvas.DrawPath(realization.Outline(layout, index), nativePaint);
+            }
+            else
+            {
+                canvas.DrawText(realization.Blob(layout, index), 0f, 0f, nativePaint);
+            }
+        }
     }
 
     /// <inheritdoc />

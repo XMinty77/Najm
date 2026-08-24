@@ -1,4 +1,5 @@
 using Najm.Core;
+using Najm.Core.Text;
 
 namespace Najm.Skia;
 
@@ -22,6 +23,11 @@ public static class SkiaExport
     /// <param name="scale">
     /// The virtual-to-output pixel scale. The default is one, so a 1920×1080 scene writes a
     /// 1920×1080 file.
+    /// </param>
+    /// <param name="typesetter">
+    /// The typesetter the scene measures and draws text through, or null for the fail-loud
+    /// <see cref="NullTypesetter"/>. Pass <c>new Najm.Text.Typesetter()</c> to export a scene with
+    /// any text in it; without one, the first text node fails at attach and says which option to set.
     /// </param>
     /// <returns>The number of ticks run before the frame was rendered, which is <c>ceil(at × fps)</c>.</returns>
     /// <remarks>
@@ -48,7 +54,8 @@ public static class SkiaExport
         string path,
         double at,
         double framesPerSecond = 60d,
-        float scale = 1f)
+        float scale = 1f,
+        ITypesetter? typesetter = null)
     {
         ArgumentNullException.ThrowIfNull(make);
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
@@ -58,6 +65,13 @@ public static class SkiaExport
 
         using var surfaces = new RasterSkiaSurfaceProvider();
         var sink = new PngFileFrameSink(path);
-        return OfflineRenderer.RenderStill(scene, surfaces, sink, at, framesPerSecond, scale);
+        return OfflineRenderer.RenderStill(
+            scene,
+            surfaces,
+            sink,
+            at,
+            framesPerSecond,
+            scale,
+            typesetter: typesetter);
     }
 }

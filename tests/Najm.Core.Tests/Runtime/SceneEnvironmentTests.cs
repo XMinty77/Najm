@@ -1,4 +1,5 @@
 using Najm.Core.Tests.Delivery;
+using Najm.Core.Text;
 
 namespace Najm.Core.Tests.Runtime;
 
@@ -151,6 +152,46 @@ public sealed class SceneEnvironmentTests
     }
 
     [TestMethod]
+    public void EveryNullTypesetterMemberRefusesWithTheSameNamedFix()
+    {
+        // The interface grew from one member to four when the text model landed, and a null object
+        // whose new members quietly did nothing would be worse than no null object at all: the
+        // scene would measure zero-sized text and render an empty frame with no explanation. Each
+        // member is therefore checked, and each is checked for both names — the option to set and
+        // the assembly that supplies the implementation — so that no call site can report a weaker
+        // message than any other.
+        var typesetter = NullTypesetter.Instance;
+        var calls = new (string Member, Action Invoke)[]
+        {
+            (nameof(ITypesetter.RegisterFamily), () => typesetter.RegisterFamily(SomeFamily())),
+            (nameof(ITypesetter.SetDefaultFamilies), () => typesetter.SetDefaultFamilies("a", "b")),
+            (nameof(ITypesetter.Metrics), () => typesetter.Metrics(SomeFace(), 12f)),
+            (nameof(ITypesetter.Typeset), () => typesetter.Typeset(new TypesetRequest("x", default))),
+        };
+
+        Assert.HasCount(
+            4,
+            typeof(ITypesetter).GetMethods(),
+            "Every ITypesetter member must be covered here; one was added without a refusal test.");
+
+        foreach (var (member, invoke) in calls)
+        {
+            var failure = Assert.ThrowsExactly<InvalidOperationException>(invoke, member);
+            Assert.Contains("HostOptions.Typesetter", failure.Message, $"{member} must name the option.");
+            Assert.Contains("Najm.Text", failure.Message, $"{member} must name the assembly.");
+            Assert.Contains("OfflineOptions.Typesetter", failure.Message, $"{member} must name the offline option.");
+        }
+    }
+
+    private static FontFace SomeFace() => new("probe.otf", new byte[] { 1, 2, 3, 4 });
+
+    private static FontFamily SomeFamily() =>
+        new("Probe", new Dictionary<(FontWeight, FontSlant), FontFace>
+        {
+            [(FontWeight.Normal, FontSlant.Upright)] = SomeFace(),
+        });
+
+    [TestMethod]
     public void NullAudioSinkSwallowsEveryEmissionWithoutComplaint()
     {
         // Silence is a correct configuration — every offline render is one — so the audio null
@@ -190,9 +231,18 @@ public sealed class SceneEnvironmentTests
 
     private sealed class StubTypesetter : ITypesetter
     {
+        public void RegisterFamily(FontFamily family)
+        {
+        }
+
         public void SetDefaultFamilies(string textFamily, string mathFamily)
         {
         }
+
+        public FontMetrics Metrics(FontFace face, float size) => default;
+
+        public ITextLayout Typeset(in TypesetRequest request) =>
+            throw new NotSupportedException("This stub exists to be injected, not to typeset.");
     }
 
     private sealed class StubAudioSink : IAudioSink

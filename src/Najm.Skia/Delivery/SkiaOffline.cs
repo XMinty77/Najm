@@ -4,9 +4,16 @@ namespace Najm.Skia;
 
 /// <summary>Renders a scene offline through CPU-raster Skia.</summary>
 /// <remarks>
+/// <para>
 /// This is the convenience over <see cref="OfflineRenderer"/>: it assembles the raster backend —
 /// <see cref="RasterSkiaSurfaceProvider"/>, and therefore <see cref="SkiaCompositor"/> — and hands
 /// the loop to Core. Determinism hashes are taken on exactly this configuration.
+/// </para>
+/// <para>
+/// It deliberately takes no typesetter of its own: <see cref="OfflineOptions.Typesetter"/> already
+/// carries one, and a second way to supply the same capability is a second thing to keep in step. A
+/// scene with text in it sets that option and this method passes it through untouched.
+/// </para>
 /// </remarks>
 public static class SkiaOffline
 {

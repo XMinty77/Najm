@@ -13,6 +13,11 @@
 
   <ItemGroup>
     <ProjectReference Include="../../src/Najm.Skia/Najm.Skia.csproj" />
+    <!-- Text lowering is only testable end to end: a real typesetter produces the layout, a text
+         node states where it sits, and this backend rasterizes it. The production graph keeps the
+         three apart; the test that proves they agree has to see all three. -->
+    <ProjectReference Include="../../src/Najm.Lib/Najm.Lib.csproj" />
+    <ProjectReference Include="../../src/Najm.Text/Najm.Text.csproj" />
   </ItemGroup>
 
   <ItemGroup>
