@@ -107,15 +107,29 @@ llvmpipe, no hardware needed.
 | 3 | Orrery | **Built.** `samples/Najm.Samples.Orrery/` |
 | 1 | Double pendulum | **Built.** `samples/Najm.Samples.Pendulum/` |
 | 6 | Mandelbrot / Julia | **In progress.** `samples/Najm.Samples.Fractal/` |
-| 4 | Sine construction | Unblocked except labels, which want text |
-| 2 | Spring–mass–gravity | **Text** |
-| 5 | Fourier wrapping | **Text** |
+| 4 | Sine construction | **Unblocked.** |
+| 2 | Spring–mass–gravity | **Unblocked.** |
+| 5 | Fourier wrapping | **Unblocked.** |
 
 Everything the first three needed has landed: Catmull-Rom splines, node-tier
 opacity and clip, the minimal scheduler, Tier-2 drawing conveniences, gradient
 trails, and the GPU surface provider with external-texture interop.
 
-Text is now the only thing standing between this list and completion.
+**Nothing on this list is blocked any more.** The baseline text slice closed the
+last dependency: `TextNode` in `Najm.Lib`, a real HarfBuzz typesetter, and
+`DrawText` as a Tier-1 op. Two caveats for the authors of the remaining three,
+both deliberate and both recorded in the deviation register:
+
+- **There is no automatic line wrapping.** Break lines with `\n`. Setting
+  `MaxWidth` throws rather than being ignored (deviation 14), so a label that
+  runs long is a loud failure at the property set, not a silent overflow.
+- **There is no rich text.** One node, one style. Mixed styling in one readout
+  means several nodes sharing a baseline via `TextNode.Baseline(line)`
+  (deviation 13).
+
+Sample 2's parameter readout is the documented `Dynamic` layout case and remains
+the honest test of it — a per-frame changing string is exactly the path where a
+layout cache either earns its keep or thrashes.
 
 ## What the built samples changed
 

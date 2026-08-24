@@ -34,7 +34,10 @@ override on `Node`, `Behavior`, and `Layer`; §3.1's `On`-prefix rule
 disambiguates hooks from same-named commands (`Scene.OnStart` vs.
 `Scene.Start(routine)`), and no `Scene.Update` command exists to collide with.
 
-**Status:** Open.
+**Status:** Implemented, alongside the minimal scheduler. `Scene.Update` runs
+before the layer traversal, ahead of the tween and coroutine passes. Both
+physics samples drive their integrators from it and neither needed a host node
+to carry a `Behavior`, which is the friction the entry predicted.
 
 ---
 
@@ -204,13 +207,12 @@ that is `Scene.VirtualResolution`, which the camera does not own.
 **Why:** a one-argument form had no honest source for the viewport size when this
 was decided; inventing a default would silently frame against the wrong box.
 
-**Status:** Open, and the blocking reason has since gone away.
-`Scene.VirtualResolution` now exists (`Scene.cs`), so the documented one-argument
-convenience can be added on `WorldLayer2D`, which can reach its scene, forwarding
-to the two-argument form. Author code should read as the reference shows. Note
-the extent a viewport'd layer frames is its viewport, not the scene's virtual
-resolution, so the convenience must forward the layer's framed extent rather than
-`Scene.VirtualResolution` unconditionally.
+**Status:** Implemented. `WorldLayer2D.FitRect(in Rect worldRect)` now exists and
+forwards to the two-argument form, so author code reads as the reference shows.
+It forwards the layer's own framed extent rather than `Scene.VirtualResolution`
+unconditionally, which is the correction this entry called for: a viewport'd
+layer frames its viewport, and passing the scene's resolution would have framed
+the wrong box in exactly the case the convenience is most useful.
 
 ---
 
@@ -243,7 +245,16 @@ up-positive axis: in `\frac{a}{b}` the numerator sits at `dy = +18.053` and the
 denominator at `dy = -18.293`. Only `MathPainter.Draw` emits the `Scale(1,-1)`.
 Najm's portable canvas must apply the flip explicitly or bake it into the
 `VectorPicture` transform, and it must compose correctly with the upright rule
-(NAJM-TEXT I.9), which is a separate flip at the layer.
+(NAJM-TEXT I.9), which is a separate flip.
+
+**Where the upright flip actually lives** (added once the text slice landed, so
+this entry does not send its reader to the wrong place): not at the layer, but at
+the node. `TextNode` composes `Translate(-anchorOrigin) * Scale(1, flip)`, taking
+`flip` from `Layer.YAxisPointsUp` at attach — a layer *fact*, applied by the node.
+Fast math's flip therefore composes against a node-level transform, and a math
+node placing a `VectorPicture` must reach the same reading frame `TextNode` does
+rather than inventing a second convention. Two flips of the same sign silently
+double; two of opposite sign silently cancel. Both render.
 
 **Status:** Open — recorded before Fast math is built, so neither is
 rediscovered by debugging wrong output.
@@ -417,6 +428,62 @@ tree went unrecorded until an audit found it.
 
 **Status:** Recorded retroactively, which is itself the defect. The code stands; the
 discipline slipped.
+
+---
+
+## 13. `TypesetRequest.Text` is a `string`, not `RichContent`
+
+**Docs:** `NAJM-TEXT.md` I.3 types a typeset request's content as `RichContent` —
+a span model carrying per-range style overrides, inline pictures, and rules — and
+describes plain text as "a degenerate `RichContent`".
+
+**Decision:** the baseline slice types it `string`. `RichContent` is not defined,
+not stubbed, and not referenced.
+
+**Why:** the degenerate case is carried in the type it actually is. The
+alternative was a one-span `RichContent` shell standing in for a model whose
+interesting members — span splitting, style resolution across a run boundary,
+inline object metrics — this slice does not implement, which would have made the
+request type look finished while every path through it handled exactly one span.
+When the span model lands, `Text` gains a `RichContent` overload and the string
+form stays as the convenience it already is, so nothing written against this
+signature changes meaning.
+
+**Consequence:** `ITextLayout` likewise declares only what plain text produces.
+`Rules`, `Pictures`, `Fragments`, the caret pair, and `BakePath` are absent
+rather than present-and-empty, so reaching for one is a compile error naming the
+missing capability rather than a silent empty result.
+
+**Status:** Implemented, and deliberately temporary. This is the entry to revisit
+first when Fast math or rich styling starts, because both need the span model
+before anything else.
+
+---
+
+## 14. `TextNode.MaxWidth` exists in order to refuse
+
+**Docs:** `NAJM-TEXT.md` I.10 lists `MaxWidth` among a text node's properties, as
+the wrapping width. Automatic line breaking is the UAX #14 stage (II.7), which
+this slice does not implement.
+
+**Decision:** the property is declared. Its getter returns null and its setter
+throws `NotSupportedException` for any non-null value.
+
+**Why:** the three options were to omit it, to accept and ignore it, or to refuse
+it. Ignoring is the one that is definitely wrong — text that does not wrap is
+indistinguishable from text whose width was wrong, so the bug presents as a
+layout mystery with no error anywhere near its cause. Omitting is quieter but
+sends an author following the reference into a compile error that names nothing.
+Refusing fails at the property set, in the author's own code, with a message
+saying to use `\n` — VI.3's fail-loud rule applied at the earliest moment it can
+be applied.
+
+**Why it is safe to reverse:** when wrapping lands this becomes an ordinary
+property, and nothing that compiles today changes meaning — code that compiles
+now either never sets it or sets it null.
+
+**Status:** Implemented, and a placeholder by construction. Unlike most entries
+here, this one is designed to be deleted.
 
 ---
 
