@@ -487,6 +487,88 @@ here, this one is designed to be deleted.
 
 ---
 
+## 15. Frame diagnostics: nothing in the reference describes a frame numerically
+
+**Docs:** §16 gives `Najm.Core` the delivery contracts (`IFrameSink`,
+`PixelFrameLease`, `OfflineRenderer`) and `Najm.Skia` the media backend that
+realizes them. The only counter type anywhere in the reference set is
+`CompositorStats` (NAJM-COMPOSITOR §9), and it counts *composition constructs* —
+brackets opened, nesting depth, RB barriers, layer-target bytes, pool events. It
+says nothing about pixels. Meanwhile the reference leans on pixel-level answers
+constantly: NAJM-COMPOSITOR §10 requires eleven goldens phrased as
+"byte-identical", the determinism posture (§2.2) is stated as "two replays hash
+identically", and NAJM-TEXT §V asks for byte-identical geometry across runs.
+Every one of those is a question about a rendered frame, and no seam in the
+reference can answer any of them. There is no `FrameStats`, no frame diff, and no
+way to read a written frame back at all.
+
+**Decision:** add a frame-diagnostics family beside the delivery seam.
+
+In `Najm.Core/Delivery`, portable and backend-neutral because they are arithmetic
+over a decoded buffer:
+
+- `LevelHistogram` — the exact 256-bucket distribution of one 8-bit channel, with
+  nearest-rank percentiles, counts at or above a level, min, max, and mean.
+- `FrameStats` — one pass over a `PixelFrameLease` or a raw span: per-channel and
+  luma histograms, white/black clipped-pixel counts against a caller-chosen level,
+  and a linear-light luminance summary with the frame's dynamic range in stops.
+- `FrameComparison` / `FrameDifference` — byte identity first, and when frames are
+  not identical, how many pixels differ, by how much at worst, on average, where
+  the first difference is, and the bounding box of all of them.
+
+In `Najm.Skia/Delivery`, because decoding a file is exactly the "image decoding"
+row §16 already assigns to the backend:
+
+- `FrameProbe` — reads a written image back into a `PixelFrameLease`, and the
+  three conveniences that follow from it (`Measure`, `Compare`, `AreIdentical`).
+
+**Why:** twice now, work built on this engine has had to construct its own
+measurement apparatus because the engine cannot describe its own output. Grading
+a volume render is a loop of render, measure, look, and the measure step was
+served by a PNG decoder written from scratch in Python, on a machine with no
+numpy, no PIL and no ImageMagick. A second study transcribed an entire volume
+integrator onto the CPU partly to reach pixel statistics. Both wanted the same
+small set of numbers — the fraction of pixels clipped to white, a p90, a
+per-channel mean, and a diff against a reference frame.
+
+The split follows the dependency rule rather than convenience. Statistics over a
+decoded buffer need nothing but arithmetic, so they are portable and testable
+without a backend; obtaining the buffer from a PNG needs a decoder, so that one
+call sits in `Najm.Skia`. `Najm.Core` gains no dependency, and a future backend
+inherits the whole family by implementing `IImage.CopyPixels`, which it must
+implement anyway.
+
+**Colour space, stated because getting it silently wrong would poison
+everything built on it.** Two luminances are reported and they are not
+interchangeable. `FrameStats.Luma` is Rec. 709 luma over the *encoded* sRGB
+bytes, rounded to a level — a display-referred number in the same units as the
+pixels, which is what "the pixel is at 254" and "p90 is 181" mean, and what the
+clipped-pixel counts are consistent with. `MeanRelativeLuminance` and its
+companions linearize each channel through the sRGB transfer function first and
+then apply the same coefficients, giving CIE relative luminance in linear light —
+the only one of the two in which a ratio is a physical ratio, hence the only one
+`DynamicRangeStops` may be derived from. Percentiles exist on the encoded
+histogram and deliberately not on the linear summary: percentiles commute with
+monotone transforms, and linear luminance is not a monotone function of encoded
+luma, so a linearized p90 would be a different pixel's value rather than the same
+pixel's value in other units.
+
+**Cost:** none, by construction. Nothing in the family is reachable from the
+render path; it is called by whoever wants a number, after the frame exists.
+`FrameComparison.AreIdentical` and `Between` are intended to allocate nothing, and
+`FrameStats.Measure` a fixed amount independent of frame size.
+
+**Status:** Implemented, and **not yet tested** — the intent above is stated, not
+demonstrated. The family builds and the existing 670 tests still pass, but no test
+covers any of it: not the percentile boundaries, not the clipping counts, not the
+difference bounding box, and the allocation claims in the paragraph above are
+unproven. That gap is real and is why this entry says so rather than reading
+"Implemented" and stopping. One arithmetic bug has already been found by the
+compiler alone (a `byte` loop index that could never reach 256 and would have
+spun forever), which is the class of error the missing tests exist to catch.
+
+---
+
 ## Documentation conflicts
 
 Places where the reference set disagrees with itself. Recorded so the
