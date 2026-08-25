@@ -243,9 +243,9 @@ public sealed class FrameStats
     /// <remarks>
     /// Absolute black is excluded because almost every frame contains some and it would make the
     /// ratio infinite, saying nothing. What is left is the span the frame actually uses, which for
-    /// an 8-bit sRGB frame is bounded above by about 12.4 stops (level 1 to level 255) — reaching
-    /// that bound is a sign the encoding, not the scene, is the limit. A frame with no lit pixel at
-    /// all reports zero.
+    /// an 8-bit sRGB frame is bounded above by about 11.7 stops — level 1 decodes to 0.000304 of
+    /// full white, and the base-2 logarithm of that ratio is 11.69. Reaching that bound is a sign
+    /// the encoding, not the scene, is the limit. A frame with no lit pixel at all reports zero.
     /// </remarks>
     /// <exception cref="InvalidOperationException">Nothing has been measured yet.</exception>
     public double DynamicRangeStops
@@ -548,6 +548,11 @@ public sealed class FrameStats
     /// between two adjacent 8-bit codes invents a precision the frame does not contain.
     /// </para>
     /// <para>
+    /// The rank is computed in <see cref="decimal"/> rather than <see cref="double"/>, because a
+    /// binary product overshoots an exact integer for ordinary quantiles and the ceiling then asks
+    /// for one rank too many.
+    /// </para>
+    /// <para>
     /// The two ends are the ones implementations get wrong, so they are pinned here:
     /// <c>Percentile(c, 1.0)</c> is exactly <see cref="Maximum(FrameChannel)"/> — a rank of <c>N</c>
     /// selects the last pixel, and an implementation indexing <c>(int)(q · N)</c> off the end or
@@ -571,7 +576,13 @@ public sealed class FrameStats
         }
 
         var pixels = PixelCount;
-        var rank = (long)Math.Ceiling(quantile * pixels);
+
+        // Decimal, not double. The rank is a count, and binary floating point cannot hold most
+        // quantiles exactly: 0.07 * 100 is 7.000000000000001, whose ceiling is 8, so the seventh
+        // percentile of a hundred-pixel frame would quietly answer with the eighth pixel. Decimal
+        // represents the quantiles anyone actually types, so the product is exact for them and the
+        // ceiling means what it says.
+        var rank = (long)Math.Ceiling((decimal)quantile * pixels);
         rank = Math.Clamp(rank, 1L, pixels);
 
         var offset = BucketOffset(channel);

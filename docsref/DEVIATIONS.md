@@ -553,19 +553,78 @@ monotone transforms, and linear luminance is not a monotone function of encoded
 luma, so a linearized p90 would be a different pixel's value rather than the same
 pixel's value in other units.
 
-**Cost:** none, by construction. Nothing in the family is reachable from the
-render path; it is called by whoever wants a number, after the frame exists.
-`FrameComparison.AreIdentical` and `Between` are intended to allocate nothing, and
-`FrameStats.Measure` a fixed amount independent of frame size.
+**Cost:** none, by construction, and now measured rather than asserted. Nothing in
+the family is reachable from the render path; it is called by whoever wants a
+number, after the frame exists. `FrameComparison.AreIdentical` and
+`FrameComparison.Between` allocate **zero** managed bytes — `Between` measured on
+both its paths, since the identical path skips each row early and would hide a
+per-pixel allocation on the path that does the work. `FrameStats.Measure` into a
+reused instance allocates **zero** per frame, and a fresh `FrameStats.Of` allocates
+the same amount for a 512x512 frame as for a 64x64 one: its histograms, not its
+pixels. All four are pinned by `AllocationProbe`, whose settle-and-retry protocol
+is what makes the readings survive method-level test parallelism.
 
-**Status:** Implemented, and **not yet tested** — the intent above is stated, not
-demonstrated. The family builds and the existing 670 tests still pass, but no test
-covers any of it: not the percentile boundaries, not the clipping counts, not the
-difference bounding box, and the allocation claims in the paragraph above are
-unproven. That gap is real and is why this entry says so rather than reading
-"Implemented" and stopping. One arithmetic bug has already been found by the
-compiler alone (a `byte` loop index that could never reach 256 and would have
-spun forever), which is the class of error the missing tests exist to catch.
+**Status:** **Implemented and tested.** 48 tests across
+`LevelHistogramTests`, `FrameStatsTests`, `FrameComparisonTests`,
+`FrameDiagnosticsAllocationTests` (Core) and `FrameProbeTests` (Skia); the suite is
+at 718.
+
+What they pin, and why each was chosen so that a plausible wrong implementation
+fails it:
+
+- **Percentile boundaries, in both percentile-bearing types.** `Percentile(0)` is
+  exactly the minimum and `Percentile(100)` (quantile `1.0` on `FrameStats`) is
+  exactly the maximum. Eight samples at eight distinct levels queried at p30 is a
+  three-way discriminator: nearest rank answers 30, a `floor` rank answers 20, a
+  strict `>` on the cumulative comparison answers 40. Verified by injecting each
+  wrong definition in turn — the `floor` rank fails 2 tests and the strict `>`
+  fails 7.
+- **Cumulative counts at both ends**, including `CountAtOrAbove(255)` and
+  `CountAtOrBelow(0)`, plus a loop asserting that the two halves partition the
+  sample at every one of the 255 split points. The 255 case is the direct
+  regression test for the `byte` loop index this family shipped with.
+- **Clipping counts as a joint question.** A frame containing saturated pure reds
+  must report them in red's top bucket and *not* in the clipped-white population,
+  which is what `ChannelFloor`/`ChannelCeiling` exist to make possible; the
+  threshold is exercised at 255 and at 254.
+- **The two brightnesses are different numbers.** Pure green measures luma 182 and
+  relative luminance 0.7152; mid grey measures luma 128 and relative luminance
+  0.216. The colour-space paragraph above is now a test rather than a claim.
+- **Difference reporting**: bounding box spanning three scattered pixels, the first
+  difference in reading order (deliberately not the leftmost), the worst single
+  channel move, symmetry under swapping the operands, and the empty box reading as
+  zeroes for an identical pair.
+- **Identity versus refusal on mismatched inputs**: differing size and differing
+  format both answer false from `AreIdentical` and both throw from `Between`.
+- **Stride padding is never measured and never compared**, on both sides.
+- **The round trip through the backend**: a frame written by `SkiaPngWriter` and
+  read back by `FrameProbe` is byte-identical, which is the property the decoder's
+  "no colour space on the destination info" decision exists to hold.
+
+Writing them found three defects beyond the `byte` loop index, all now fixed:
+
+1. `FrameStats.Percentile` computed its rank in `double`. `0.07 * 100` is
+   7.000000000000001, so the 7th percentile of a hundred-pixel frame silently
+   returned the 8th pixel. `LevelHistogram` already computed its rank in `decimal`
+   and documented why; `FrameStats` did not. It does now.
+2. `FrameComparison.Between` returned `(0, 0, -1, -1)` as the empty bounding box
+   while its own comment said "zeroes" and `FrameDifference`'s documentation said
+   all four were `-1`. Three descriptions, no two alike. It is four zeroes now,
+   documented as such; `FirstDifferenceX`/`Y` stay `-1`, because `(0, 0)` is a real
+   position and zero there would name a pixel.
+3. `DynamicRangeStops` documented the 8-bit sRGB ceiling as "about 12.4 stops". It
+   is 11.69 — level 1 decodes to 0.000304 of full white. The number is now correct
+   and pinned by a test.
+
+One wrinkle this entry should not hide: `LevelHistogram` is public, fully tested,
+and consumed by nothing. It survived the reconciliation of two overlapping drafts
+in which `FrameStats` won, and it duplicates `FrameStats`'s histogram queries with
+an incompatible convention — percentages 0-100 against quantiles 0-1. It is tested
+rather than deleted because deleting public surface is a decision to take on
+purpose rather than in passing, but the two conventions living one namespace apart
+is exactly the sort of thing that later produces a measurement off by a factor of
+a hundred. Either give `FrameStats` a `LevelHistogram`-returning accessor or remove
+the type.
 
 ---
 

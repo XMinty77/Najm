@@ -208,8 +208,9 @@ public readonly struct LevelHistogram
     /// that every percentile names a real sample.
     /// </summary>
     /// <remarks>
-    /// Shared with <see cref="SampleStatistics"/> so the two families cannot drift apart on the one
-    /// definition that is easy to get subtly wrong.
+    /// Exposed to this assembly's tests rather than kept inline, because it is the one definition in
+    /// the family that is easy to get subtly wrong and it deserves to be pinned on its own rather
+    /// than only through the distributions that happen to exercise it.
     /// </remarks>
     internal static long RankOf(double percentile, long count)
     {

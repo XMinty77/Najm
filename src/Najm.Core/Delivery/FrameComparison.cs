@@ -188,10 +188,11 @@ public static class FrameComparison
 
         if (differingPixels == 0L)
         {
-            // An empty bounding box is reported as zeroes rather than as the sentinel extremes the
-            // scan started from, so that a caller printing the box for an identical pair sees
-            // nothing rather than int.MaxValue.
-            return new FrameDifference(width, height, 0L, 0, 0L, -1, -1, 0, 0, -1, -1);
+            // An empty bounding box is reported as four zeroes rather than as the sentinel extremes
+            // the scan started from, so that a caller printing the box for an identical pair sees
+            // nothing rather than int.MaxValue. The first-difference position is -1 instead,
+            // because (0, 0) is a real position and zero there would name a pixel.
+            return new FrameDifference(width, height, 0L, 0, 0L, -1, -1, 0, 0, 0, 0);
         }
 
         return new FrameDifference(

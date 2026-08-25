@@ -101,16 +101,22 @@ public readonly struct FrameDifference
     /// <summary>Gets the row of the first differing pixel in raster order, or -1 if identical.</summary>
     public int FirstDifferenceY { get; }
 
-    /// <summary>Gets the leftmost column containing a difference, or -1 if identical.</summary>
+    /// <summary>Gets the leftmost column containing a difference, or zero if identical.</summary>
+    /// <remarks>
+    /// All four bounds read zero for an identical pair, so the empty box prints as nothing rather
+    /// than as the sentinel extremes a scan starts from. Test emptiness with
+    /// <see cref="AreIdentical"/> or <see cref="BoundsWidth"/>, never by looking for a sentinel
+    /// here — unlike <see cref="FirstDifferenceX"/>, which is -1 because zero is a real position.
+    /// </remarks>
     public int BoundsLeft { get; }
 
-    /// <summary>Gets the topmost row containing a difference, or -1 if identical.</summary>
+    /// <summary>Gets the topmost row containing a difference, or zero if identical.</summary>
     public int BoundsTop { get; }
 
-    /// <summary>Gets the rightmost column containing a difference, inclusive, or -1 if identical.</summary>
+    /// <summary>Gets the rightmost column containing a difference, inclusive, or zero if identical.</summary>
     public int BoundsRight { get; }
 
-    /// <summary>Gets the bottommost row containing a difference, inclusive, or -1 if identical.</summary>
+    /// <summary>Gets the bottommost row containing a difference, inclusive, or zero if identical.</summary>
     public int BoundsBottom { get; }
 
     /// <summary>Gets the width of the region containing every difference, or zero if identical.</summary>
