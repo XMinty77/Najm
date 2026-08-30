@@ -18,6 +18,16 @@ namespace Najm.Core;
 /// with — <see cref="NullTypesetter"/> says so loudly, by name, if it was not.
 /// </para>
 /// <para>
+/// <strong>The environment's capabilities are the provider's.</strong> An offline run has no host to
+/// declare what its targets can do, so the driver takes the answer from the only object that knows:
+/// <see cref="ISurfaceProvider.Caps"/> is copied into <see cref="SceneEnvironment.Caps"/> at load.
+/// This is what makes a GPU offline run tell the truth. Before it, a scene rendered through a
+/// GPU-backed provider was loaded into an environment claiming <see cref="RenderCaps.None"/>, so the
+/// one configuration where a GL-texture drawable is <em>correct</em> was also the one where the
+/// attach-time check said it was impossible — and authors were pushed into reading
+/// <c>context.Caps</c> from inside <c>Render</c>, which is a frame too late to be a contract.
+/// </para>
+/// <para>
 /// <strong>The timing contract.</strong> The clock is <see cref="ClockPolicy.Fixed(double)"/> at
 /// the requested rate, so tick <c>k</c> carries <c>Dt = 1/fps</c> and <c>Elapsed = (k+1)/fps</c>,
 /// derived rather than accumulated. <strong>Output frame <c>k</c> is the render performed after
@@ -74,7 +84,10 @@ public static class OfflineRenderer
         var frameCount = options.ResolveFrameCount();
         var framesPerSecond = options.Fps;
 
-        scene.Load(new SceneEnvironment(surfaces, typesetter: options.Typesetter));
+        scene.Load(new SceneEnvironment(
+            surfaces,
+            typesetter: options.Typesetter,
+            caps: surfaces.Caps));
         try
         {
             var size = ResolveOutputSize(scene.VirtualResolution, options.Scale, options.OutputSize);
@@ -167,7 +180,7 @@ public static class OfflineRenderer
 
         var ticks = FixedStepTiming.TicksForStill(at, framesPerSecond);
 
-        scene.Load(new SceneEnvironment(surfaces, typesetter: typesetter));
+        scene.Load(new SceneEnvironment(surfaces, typesetter: typesetter, caps: surfaces.Caps));
         try
         {
             var size = ResolveOutputSize(scene.VirtualResolution, scale, outputSize: null);

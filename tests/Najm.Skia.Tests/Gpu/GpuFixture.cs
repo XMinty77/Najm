@@ -69,6 +69,22 @@ internal sealed class GpuFixture : IDisposable
         }
     }
 
+    /// <summary>
+    /// Asserts a headless GL stack exists without holding one, for a test whose subject brings up
+    /// its own context.
+    /// </summary>
+    /// <remarks>
+    /// The offline GPU backend creates and owns its context, so a test of it must not be holding a
+    /// second one on the same thread: two contexts made current in turn on one thread leaves the
+    /// first silently non-current, which is precisely the failure mode this suite exists to avoid
+    /// staging accidentally. So the probe context is created to prove EGL works and disposed
+    /// immediately, and the subject is left to do its own bring-up.
+    /// </remarks>
+    internal static void RequireStack()
+    {
+        using var probe = Require();
+    }
+
     /// <summary>Disposes the provider first and the GL context after, which is the pinned order.</summary>
     public void Dispose()
     {

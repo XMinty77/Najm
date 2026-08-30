@@ -14,6 +14,18 @@ public sealed class RasterSkiaSurfaceProvider : ISurfaceProvider
     private bool disposed;
 
     /// <inheritdoc />
+    /// <remarks>
+    /// <see cref="RenderCaps.SkiaSurface"/> and nothing more. A raster target accepts a
+    /// <c>SkiaDrawable</c>'s native commands, so the Skia flag is real; it is not
+    /// <see cref="RenderCaps.GpuBacked"/>, which is what content holding a wrapped GL texture keys
+    /// its attach-time refusal on. The value is stated even after
+    /// <see cref="Dispose"/> — capabilities describe the backend this provider realizes, not whether
+    /// it is still open for business, and a disposed provider that threw here would make a
+    /// capability check the one thing a teardown path could not safely ask.
+    /// </remarks>
+    public RenderCaps Caps => RenderCaps.SkiaSurface;
+
+    /// <inheritdoc />
     public IRenderTarget CreateTarget(in SurfaceSpec spec)
     {
         ObjectDisposedException.ThrowIf(disposed, this);

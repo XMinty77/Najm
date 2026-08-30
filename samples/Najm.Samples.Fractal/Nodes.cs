@@ -11,8 +11,10 @@ namespace Najm.Samples.Fractal;
 /// <remarks>
 /// This is the whole claim of ARCHITECTURE §7.5 made concrete — a custom GL pipeline is "an ordinary
 /// drawable that owns its render-to-texture privately". Nothing below this line is GPU-aware except
-/// the capability check, and the check is here rather than at attach only because the environment
-/// cannot answer it at attach time (NOTES.md F-3).
+/// the capability check, and that check is now a backstop rather than the contract: the scene
+/// refuses at load, where an author can act on it, because <c>Env.Caps</c> finally answers there
+/// (F-3, closed). This one stays because a drawable can be moved into a tree the scene did not
+/// validate, and transparent black is not a failure anyone would notice.
 /// </remarks>
 internal sealed class FractalNode(FractalTexture texture) : Drawable
 {

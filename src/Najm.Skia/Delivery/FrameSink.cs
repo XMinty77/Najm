@@ -1,12 +1,16 @@
+using Najm.Core;
+
 namespace Najm.Skia;
 
 /// <summary>Creates the frame sinks Najm's media backend ships.</summary>
 /// <remarks>
-/// Two destinations, and they are not equals. <see cref="FfmpegPipe(string, FfmpegPipeOptions?)"/>
-/// is the default: raw frames go down a pipe into an encoder and only the finished video reaches
-/// the disk. <see cref="PngSequence(string, string)"/> writes one file per frame and is for the
-/// cases where the frames themselves are the deliverable — read its remarks about size before
-/// pointing a long render at it.
+/// Three destinations, and they are not equals.
+/// <see cref="FfmpegPipe(string, FfmpegPipeOptions?)"/> is the default for a sequence: raw frames go
+/// down a pipe into an encoder and only the finished video reaches the disk.
+/// <see cref="PngSequence(string, string)"/> writes one file per frame and is for the cases where
+/// the frames themselves are the deliverable — read its remarks about size before pointing a long
+/// render at it. <see cref="PngFile(string)"/> is the odd one out: it takes a still, not a sequence,
+/// and refuses a stream that is longer than one frame.
 /// </remarks>
 public static class FrameSink
 {
@@ -60,4 +64,32 @@ public static class FrameSink
     /// <exception cref="ArgumentException">An argument is null, whitespace, or not a legal file name.</exception>
     public static PngSequenceFrameSink PngSequence(string directory, string name = "frame") =>
         new(directory, name);
+
+    /// <summary>Creates a sink that writes one frame to one named PNG file.</summary>
+    /// <param name="path">The PNG file to write. Its directory is created if absent.</param>
+    /// <returns>An unstarted sink that accepts exactly one frame.</returns>
+    /// <remarks>
+    /// <para>
+    /// The sink for a still. <see cref="OfflineRenderer.RenderStill"/> produces a one-frame stream
+    /// and a still has one destination, so this is not
+    /// <see cref="PngSequence(string, string)"/> with a count of one: it takes the whole path rather
+    /// than a directory and a stem, and it refuses a stream declaring more than one frame instead of
+    /// quietly rewriting the same file per frame.
+    /// </para>
+    /// <para>
+    /// <strong>Most callers want <see cref="SkiaExport.Png"/> instead</strong>, which assembles a
+    /// backend, seeks to a time, and renders through this sink in one call. Reach for the sink
+    /// directly when driving <see cref="OfflineRenderer.RenderStill"/> yourself — a still with an
+    /// explicit output size, a pixel format the export convenience does not expose, or a provider
+    /// you already own and are not willing to have built for you.
+    /// </para>
+    /// <para>
+    /// The file is written when the frame is submitted, not when the sink is disposed. A run that
+    /// fails before submitting leaves no file, and the sink says so from
+    /// <see cref="IFrameSink.End"/> rather than reporting a completed stream over a path that does
+    /// not exist.
+    /// </para>
+    /// </remarks>
+    /// <exception cref="ArgumentException"><paramref name="path"/> is null or whitespace.</exception>
+    public static PngFileFrameSink PngFile(string path) => new(path);
 }

@@ -150,6 +150,44 @@ internal sealed class CapturingFrameSink : IFrameSink
     }
 }
 
+/// <summary>A square scene filled diagonally, with antialiasing off.</summary>
+/// <remarks>
+/// The fixture for questions about surface sample count. Its one edge runs at 45°, and the paint
+/// asks for no antialiasing, so on a single-sampled surface every pixel on that edge is fully
+/// covered or fully empty. Anything in between can only have come from the surface multisampling,
+/// which makes "did the sample count reach the surface" answerable by looking at the pixels rather
+/// than by asking the provider what it normalized to.
+/// </remarks>
+internal sealed class DiagonalScene : Scene
+{
+    /// <summary>The scene's width and height in virtual units, which is also its pixel size at scale one.</summary>
+    internal const int Extent = 64;
+
+    internal DiagonalScene()
+    {
+        VirtualResolution = new Vector2(Extent, Extent);
+        var layer = Layers.Add(new ScreenLayer { ClearColor = DeliveryColors.OpaqueBlack });
+        layer.Root.Add(new DiagonalHalf());
+    }
+
+    private sealed class DiagonalHalf : Drawable
+    {
+        private static readonly Rect Bounds = new(0f, 0f, Extent, Extent);
+
+        private readonly PathBuilder path = new PathBuilder(initialCapacity: 4)
+            .MoveTo(0f, 0f)
+            .LineTo(Extent, 0f)
+            .LineTo(0f, Extent)
+            .Close();
+
+        private readonly Paint paint = Paint.Fill(DeliveryColors.OpaqueRed, isAntialias: false);
+
+        public override Rect GeometryBounds => Bounds;
+
+        public override void Render(IDrawContext2D context) => context.DrawPath(path, paint);
+    }
+}
+
 /// <summary>The colors the delivery fixtures paint with.</summary>
 internal static class DeliveryColors
 {

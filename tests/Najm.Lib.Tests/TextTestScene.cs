@@ -68,6 +68,8 @@ internal sealed class TextTestScene : IDisposable
     /// <summary>A provider that satisfies scene load and draws nothing, because nothing draws.</summary>
     private sealed class SilentSurfaceProvider : ISurfaceProvider
     {
+        public RenderCaps Caps => RenderCaps.None;
+
         public IRenderTarget CreateTarget(in SurfaceSpec spec) =>
             throw new NotSupportedException("These tests measure layouts; they do not draw.");
 

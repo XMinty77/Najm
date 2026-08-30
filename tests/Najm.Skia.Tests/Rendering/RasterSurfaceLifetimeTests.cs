@@ -33,6 +33,26 @@ public sealed class RasterSurfaceLifetimeTests
     }
 
     [TestMethod]
+    public void Caps_AreTheTargetsCaps_AndSurviveDisposal()
+    {
+        // The provider's answer is what an attaching node reads through Env.Surfaces, and the
+        // target's is what a drawable reads mid-render. They have to be the same statement or the
+        // attach-time check is checking something else.
+        var provider = new RasterSkiaSurfaceProvider();
+        using (var target = provider.CreateTarget(new SurfaceSpec(1, 1)))
+        {
+            Assert.AreEqual(RenderCaps.SkiaSurface, provider.Caps);
+            Assert.AreEqual(provider.Caps, target.GetContext().Caps);
+        }
+
+        provider.Dispose();
+
+        // Capabilities describe the backend, not whether the provider is still open. A teardown path
+        // that asks what it was rendering through must not be the thing that throws.
+        Assert.AreEqual(RenderCaps.SkiaSurface, provider.Caps);
+    }
+
+    [TestMethod]
     public void DisposedProvider_RejectsNewTargets()
     {
         var provider = new RasterSkiaSurfaceProvider();

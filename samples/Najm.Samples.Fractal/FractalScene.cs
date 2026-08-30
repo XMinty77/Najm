@@ -49,12 +49,20 @@ internal sealed class FractalScene : Scene
     /// <inheritdoc />
     protected override void OnLoad()
     {
-        // Finding F-4: the seam's operations live on the concrete provider, and SceneEnvironment
-        // hands out the interface. Every GL-interop scene starts with this cast.
-        var gpu = Env.Surfaces as GpuSkiaSurfaceProvider
-            ?? throw new InvalidOperationException(
-                $"This scene renders through a GL texture and needs {nameof(GpuSkiaSurfaceProvider)}; "
-                + $"it was loaded with {Env.Surfaces.GetType().Name}.");
+        // The capability first (NAJM-SKIA I.7), the cast second. They are two questions: the check
+        // asks whether this target can do GL at all and is the one whose failure an author can act
+        // on, while the cast only reaches operations that are backend-specific by definition. F-3
+        // was that the check could not be asked here — Env.Caps was RenderCaps.None on every offline
+        // run, including this one — and F-4 was that no document admitted the cast. Both closed.
+        if (!Env.Caps.HasFlag(RenderCaps.GpuBacked))
+        {
+            throw new InvalidOperationException(
+                "This scene renders through an author-owned GL texture and needs a GPU-backed "
+                + $"target; this environment advertises {Env.Caps}. Render with "
+                + $"{nameof(OfflineBackend)}.{nameof(OfflineBackend.Gpu)}.");
+        }
+
+        var gpu = (GpuSkiaSurfaceProvider)Env.Surfaces;
 
         pipeline = new FractalGpu(Design.Frame, samples);
 

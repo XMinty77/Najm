@@ -142,6 +142,8 @@ public sealed class UpdatePhaseOrderTests
     {
         internal CallbackCompositor Compositor { get; } = new();
 
+        public RenderCaps Caps => RenderCaps.None;
+
         public IRenderTarget CreateTarget(in SurfaceSpec spec) => new StubRenderTarget(spec);
 
         public ICompositor CreateCompositor() => Compositor;

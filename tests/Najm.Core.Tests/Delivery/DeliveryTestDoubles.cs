@@ -23,6 +23,13 @@ internal sealed class StubSurfaceProvider : ISurfaceProvider
 
     internal bool Disposed { get; private set; }
 
+    /// <summary>
+    /// What this provider claims its targets can do. <see cref="RenderCaps.None"/> by default,
+    /// which is the truth about a provider with no backend; settable so a test can stand in for a
+    /// backend that promises something.
+    /// </summary>
+    public RenderCaps Caps { get; init; } = RenderCaps.None;
+
     public IRenderTarget CreateTarget(in SurfaceSpec spec)
     {
         TargetsCreated++;

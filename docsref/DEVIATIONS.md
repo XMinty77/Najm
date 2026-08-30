@@ -628,6 +628,159 @@ the type.
 
 ---
 
+## 16. `ISurfaceProvider` states its own `RenderCaps`
+
+**Docs:** NAJM-SKIA I.7 specifies the interop check as attach-time: "a drawable
+holding a wrapped image validates `Caps.GpuBacked` (fail-fast on raster/offline
+configurations)". §6.6 puts capability access at attach, through `Scene.Env`.
+V.1's environment matrix gives every configuration a `Caps` column and §57's
+mapping row fixes the values: `GpuSkiaSurfaceProvider ⇒ SkiaSurface | GpuBacked`,
+`RasterSkiaSurfaceProvider ⇒ SkiaSurface`.
+
+What the reference never says is *where an attached node reads that from*.
+`ISurfaceProvider` declared `CreateTarget` and `CreateCompositor` and nothing
+else, so the mapping existed only on the two concrete Skia classes.
+`SceneEnvironment.Caps` existed but was a value a host passed in, and
+`OfflineRenderer` passed none — leaving `RenderCaps.None` on a GPU offline run,
+the one configuration where a GL-texture drawable is correct.
+
+**Decision:** add `RenderCaps Caps { get; }` to `ISurfaceProvider`, with no
+default implementation, and have `OfflineRenderer.Render` and
+`OfflineRenderer.RenderStill` copy `surfaces.Caps` into the `SceneEnvironment`
+they build.
+
+**Why:** the check I.7 describes normatively could not be written. Attach sees an
+environment, the environment's provider is an `ISurfaceProvider`, and the
+interface had no capability member — so the only honest place left to ask was
+`context.Caps` inside `Render`, which is a frame after the decision and therefore
+a diagnostic rather than a contract. Three projects in a row wrote that check in
+the wrong place because it was the only place. The member is the two lines that
+make the specified behaviour expressible.
+
+No default implementation, deliberately. `RenderCaps.None` would have kept every
+existing implementer compiling, and it is also exactly the wrong answer for a
+backend that forgot to say: content declines to attach, correctly, with no
+indication that the provider — not the content — is what is misconfigured. The
+four in-tree test doubles were four one-line edits. This is also why the interface
+carries the pre-release notice it does.
+
+**Why the environment's `Caps` is still a separate value.** The obvious next step
+would be for `SceneEnvironment` to derive `Caps` from `Surfaces` and stop taking
+the parameter. It does not, because V.1's vector-export row is a live
+counterexample: that configuration holds a *raster* provider as staging while the
+writer context carries `SkiaSurface | VectorTarget`, so the environment's
+capabilities and its provider's are not always the same fact. The driver that
+assembles an environment is responsible for keeping the two in step, and the
+offline driver now does. A host is the next one that will have to, and nothing
+enforces it — that is the remaining gap, recorded rather than papered over.
+
+**What this does not do: remove the downcast.** A GL-interop scene still opens
+with `Env.Surfaces as GpuSkiaSurfaceProvider`, because `WrapGlTexture`,
+`ResetGlState`, and `Flush` are backend-specific by definition and do not belong
+on a portable interface. What changes is what the cast is *for*: it was carrying
+two jobs, validation and access, and validation was the one it did badly — a cast
+that fails says the provider is the wrong type, not that the target cannot do GL,
+and the two stop coinciding the moment a second GPU backend exists. The
+capability check is now `Env.Surfaces.Caps.HasFlag(RenderCaps.GpuBacked)` and the
+cast is left doing only what it is genuinely for. No helper was added to hide it:
+a one-line convenience over a cast is a second name for a language feature, and
+the reporter of this friction said plainly they had no better idea than the cast.
+The gap that could be closed was the documentation, and
+`GpuSkiaSurfaceProvider`'s class remarks now carry the two-step idiom verbatim.
+
+**Status:** Implemented.
+
+---
+
+## 17. The offline entry points take a backend
+
+**Docs:** NAJM-SKIA V.1's environment matrix gives "Offline (`SkiaOffline.Render`)"
+exactly one row, and that row's `Surfaces` cell is `RasterSkiaSurfaceProvider`
+with `Caps = SkiaSurface`. V.2 sketches `SkiaOffline.Render(Func<Scene>,
+OfflineOptions)` with no backend parameter. The GPU provider appears only in the
+`DesktopHost` row, whose GL context comes from the host (§4.6).
+
+So the reference has no offline GPU configuration at all. It is not that it
+forbids one; it never contemplated one, because it assumed the only reason to
+want a GPU was a window.
+
+**Decision:** add `OfflineBackend { Raster, Gpu }` and an optional `backend`
+parameter to `SkiaOffline.Render` and `SkiaExport.Png`, defaulting to `Raster`.
+`OfflineBackend.Gpu` builds `HeadlessGlContext.Create()` and
+`GpuSkiaSurfaceProvider.CreateOver(glContext, ownsGlContext: true)`. Also add
+`sampleCount` to `SkiaExport.Png`, which `SkiaOffline.Render` already had through
+`OfflineOptions`.
+
+**Why:** the interop seam (I.7, deviation 9) exists so an author can render their
+own GL into a texture and let the engine composite it. Every scene that uses it
+needs `RenderCaps.GpuBacked`, and the documented export route could not produce
+that target, so *every* such project has written the same ten lines: create the
+context, create the provider over it with `ownsGlContext: true`, construct the
+scene, call `OfflineRenderer` directly, dispose in the right order. Three
+independent copies now exist — the fractal sample, the Najm GPU tests, and an
+external presentation project — which is the number at which duplication stops
+being a coincidence. The dispose ordering in particular (`GRContext` released
+while its GL context is still alive) is a convenience's job, not an author's: get
+it wrong and the failure is a crash at shutdown, after the frames are already
+written and the run looks successful.
+
+`sampleCount` goes on `Png` because the GPU backend is what makes it mean
+anything. Raster Skia is analytically antialiased and normalizes every count to
+one, so the parameter was genuinely useless before; a GPU surface multisamples,
+and a GPU still at one sample has hard edges that look like an engine defect. The
+route that exists so an author can *look* at a frame should not be the route that
+cannot ask for the frame to look right.
+
+**What was deliberately not added.** No public factory for the provider itself.
+The ten duplicated lines are the *driver*, and that is what the parameter
+absorbs; an author who wants the provider on its own — to read `MaxTextureSize`,
+or to print the GL banner — already has two public calls that do it, with the
+ownership flag that makes the teardown correct. A third way to build the same
+object would be surface without a friction behind it.
+
+**The honest cost.** `OfflineBackend.Gpu` is Linux-only, because
+`HeadlessGlContext` is, and it fails from the entry point with
+`PlatformNotSupportedException` rather than at a loader boundary. And it narrows
+determinism: two GPU runs on one machine agree, two machines with different
+drivers need not, so §2.2's "two replays hash identically" remains a statement
+about the raster row and nothing here promises to extend it. Both are documented
+on the enum members rather than left for a reader to discover.
+
+**Status:** Implemented.
+
+---
+
+## 18. `FrameSink.PngFile`
+
+**Docs:** V.3 and V.4 specify `FrameSink.PngSequence` and `FrameSink.FfmpegPipe`.
+Neither the reference nor deviation 4, which added `SkiaExport.Png`, mentions a
+sink that writes one named file; the still export's sink was written as an
+internal implementation detail of that convenience.
+
+**Decision:** make `PngFileFrameSink` public — public type, internal constructor,
+reached through a new `FrameSink.PngFile(string path)` factory, exactly as
+`PngSequenceFrameSink` and `FfmpegFrameSink` already are. Add a `Path` property.
+
+**Why:** `SkiaExport.Png` only serves a caller happy with everything else it
+decides. A caller driving `OfflineRenderer.RenderStill` directly — because they
+need an explicit output size, a pixel format, or a provider they already own —
+had no public route to a named PNG at all. What they wrote instead, three times
+now, is a `PngSequence` into a scratch directory, a `File.Move` of
+`still_00000.png`, and a `try/finally` that deletes the directory: eleven lines
+whose only purpose is to rename a file, and which quietly depend on the sequence
+sink's zero-padding format.
+
+The sink is not a special case of the sequence sink and should not be emulated by
+one. It takes a path rather than a directory and a stem; it refuses a stream
+declaring more than one frame instead of overwriting the same file per frame; and
+it refuses a stream that submitted nothing instead of reporting success over a
+file that does not exist. All three behaviours already existed and were only
+unreachable.
+
+**Status:** Implemented.
+
+---
+
 ## Documentation conflicts
 
 Places where the reference set disagrees with itself. Recorded so the

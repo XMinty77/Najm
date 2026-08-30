@@ -3,17 +3,20 @@ using Najm.Skia;
 
 namespace Najm.Samples.Fractal;
 
-/// <summary>
-/// The GPU half of <c>SkiaOffline</c> / <c>SkiaExport</c>, which the engine does not ship.
-/// </summary>
+/// <summary>The sample's GL bring-up, and the two runs it drives over the context it keeps.</summary>
 /// <remarks>
 /// <para>
-/// <strong>This file should not exist.</strong> <see cref="SkiaOffline.Render"/> and
-/// <see cref="SkiaExport.Png"/> construct <c>RasterSkiaSurfaceProvider</c> inside their own bodies,
-/// so neither can render a scene that needs <see cref="RenderCaps.GpuBacked"/> — which is every
-/// scene the external-texture seam exists for. <see cref="OfflineRenderer"/> in Core takes an
-/// <see cref="ISurfaceProvider"/> and is entirely happy with a GPU one; only the assembly is
-/// missing. See NOTES.md finding F-1.
+/// <strong>Most of this file was finding F-1, and F-1 is closed.</strong>
+/// <see cref="SkiaOffline.Render"/> and <see cref="SkiaExport.Png"/> now take an
+/// <see cref="OfflineBackend"/>, so a scene needing <see cref="RenderCaps.GpuBacked"/> renders
+/// through the ordinary entry points and nobody has to assemble a GPU provider to get one.
+/// </para>
+/// <para>
+/// <strong>What is left is what this sample specifically wants.</strong> It holds the context
+/// across many renders rather than bringing one up per still — the probe loop renders dozens — and
+/// it prints the GL banner, which needs the <see cref="HeadlessGlContext"/> itself and not just the
+/// provider over it. Neither is friction the engine should absorb; a sample that reports which
+/// rasterizer produced its pixels is a sample doing its job.
 /// </para>
 /// <para>
 /// <strong>Dispose order is the reason this is a class and not two loose methods.</strong> The
@@ -67,42 +70,25 @@ internal sealed class GpuOffline : IDisposable
 
     /// <summary>Renders one frame at a chosen time and writes it to a named PNG.</summary>
     /// <remarks>
-    /// The file-system shuffle at the end is finding F-2: <c>PngFileFrameSink</c> is internal and
-    /// <c>SkiaExport.Png</c> is raster-only, so the only public route to a PNG is the
-    /// <em>sequence</em> sink, which names its one frame <c>still_00000.png</c>.
+    /// This used to end in a scratch directory, a <c>File.Move</c> of <c>still_00000.png</c>, and a
+    /// <c>try/finally</c> that deleted the directory, because the only public sink that could write a
+    /// PNG was the numbered <em>sequence</em> sink — finding F-2. <see cref="FrameSink.PngFile"/>
+    /// closed it, and those eleven lines are now one.
     /// </remarks>
     internal long RenderStill(Func<Scene> make, string path, double at, double fps, int sampleCount)
     {
         ObjectDisposedException.ThrowIf(disposed, this);
         var scene = make() ?? throw new InvalidOperationException("The scene factory returned null.");
 
-        var full = Path.GetFullPath(path);
-        Directory.CreateDirectory(Path.GetDirectoryName(full)!);
-        var scratch = Path.Combine(Path.GetTempPath(), $"najm-still-{Guid.NewGuid():N}");
-        try
-        {
-            var sink = FrameSink.PngSequence(scratch, "still");
-            var ticks = OfflineRenderer.RenderStill(
-                scene,
-                provider,
-                sink,
-                at,
-                fps,
-                scale: 1f,
-                format: PixelFormat.Rgba8888,
-                sampleCount: sampleCount);
-
-            var written = Path.Combine(scratch, "still_00000.png");
-            File.Move(written, full, overwrite: true);
-            return ticks;
-        }
-        finally
-        {
-            if (Directory.Exists(scratch))
-            {
-                Directory.Delete(scratch, recursive: true);
-            }
-        }
+        return OfflineRenderer.RenderStill(
+            scene,
+            provider,
+            FrameSink.PngFile(path),
+            at,
+            fps,
+            scale: 1f,
+            format: PixelFormat.Rgba8888,
+            sampleCount: sampleCount);
     }
 
     /// <summary>Disposes the provider, which disposes the GPU context and then the GL context.</summary>

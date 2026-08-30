@@ -5,9 +5,17 @@ namespace Najm.Skia;
 
 /// <summary>Exports a single frame of a scene at a chosen time.</summary>
 /// <remarks>
+/// <para>
 /// With no live preview yet, a rendered PNG is how a change is seen at all, so this is part of the
 /// working loop rather than a delivery convenience. Vector exports join it here when the writers
 /// land.
+/// </para>
+/// <para>
+/// It renders through whichever <see cref="OfflineBackend"/> is asked for, so the inspection loop is
+/// available to a GPU scene on the same terms as a raster one. That was not true before: the export
+/// route built a raster provider in its own body, which made the one route an author is told to use
+/// the one route a GL-interop scene could not use.
+/// </para>
 /// </remarks>
 public static class SkiaExport
 {
@@ -29,6 +37,18 @@ public static class SkiaExport
     /// <see cref="NullTypesetter"/>. Pass <c>new Najm.Text.Typesetter()</c> to export a scene with
     /// any text in it; without one, the first text node fails at attach and says which option to set.
     /// </param>
+    /// <param name="backend">
+    /// Which Skia backend to render through. The default is CPU raster; pass
+    /// <see cref="OfflineBackend.Gpu"/> for a scene that needs a GPU-backed target. Read that
+    /// member's remarks before doing so — the GPU path brings up a GL context on the calling thread,
+    /// and it is not the configuration goldens are taken on.
+    /// </param>
+    /// <param name="sampleCount">
+    /// The requested surface sample count. The default is one, which is the only value CPU raster
+    /// has: raster Skia is analytically antialiased and normalizes every count to one. It becomes
+    /// real on <see cref="OfflineBackend.Gpu"/>, where one sample means no antialiasing at all and
+    /// four is the usual answer for a figure with geometry in it.
+    /// </param>
     /// <returns>The number of ticks run before the frame was rendered, which is <c>ceil(at × fps)</c>.</returns>
     /// <remarks>
     /// <para>
@@ -43,19 +63,29 @@ public static class SkiaExport
     /// </para>
     /// </remarks>
     /// <exception cref="ArgumentNullException">An argument is null.</exception>
-    /// <exception cref="ArgumentException"><paramref name="path"/> is whitespace.</exception>
-    /// <exception cref="ArgumentOutOfRangeException">
-    /// <paramref name="at"/>, <paramref name="framesPerSecond"/>, or <paramref name="scale"/> is out
-    /// of range.
+    /// <exception cref="ArgumentException">
+    /// <paramref name="path"/> is whitespace, or <paramref name="backend"/> is not a defined backend.
     /// </exception>
-    /// <exception cref="InvalidOperationException">The factory returned null.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// <paramref name="at"/>, <paramref name="framesPerSecond"/>, <paramref name="scale"/>, or
+    /// <paramref name="sampleCount"/> is out of range.
+    /// </exception>
+    /// <exception cref="InvalidOperationException">
+    /// The factory returned null, or the GPU backend was asked for and no GL context could be
+    /// brought up.
+    /// </exception>
+    /// <exception cref="PlatformNotSupportedException">
+    /// <see cref="OfflineBackend.Gpu"/> was asked for on a platform with no headless GL context.
+    /// </exception>
     public static long Png(
         Func<Scene> make,
         string path,
         double at,
         double framesPerSecond = 60d,
         float scale = 1f,
-        ITypesetter? typesetter = null)
+        ITypesetter? typesetter = null,
+        OfflineBackend backend = OfflineBackend.Raster,
+        int sampleCount = 1)
     {
         ArgumentNullException.ThrowIfNull(make);
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
@@ -63,7 +93,7 @@ public static class SkiaExport
         var scene = make()
             ?? throw new InvalidOperationException("The scene factory returned null.");
 
-        using var surfaces = new RasterSkiaSurfaceProvider();
+        using var surfaces = OfflineSurfaces.Create(backend);
         var sink = new PngFileFrameSink(path);
         return OfflineRenderer.RenderStill(
             scene,
@@ -72,6 +102,7 @@ public static class SkiaExport
             at,
             framesPerSecond,
             scale,
+            sampleCount: sampleCount,
             typesetter: typesetter);
     }
 }

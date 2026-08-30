@@ -15,6 +15,38 @@ namespace Najm.Skia;
 /// Either way the provider's business starts at the <see cref="GRContext"/>.
 /// </para>
 /// <para>
+/// <strong>How a scene reaches this provider, spelled out because every author on this seam
+/// writes it and no document has shown it.</strong> A scene is handed an
+/// <see cref="ISurfaceProvider"/>, and the interop operations —
+/// <see cref="WrapGlTexture(uint, PixelSize)"/>, <see cref="ResetGlState"/>,
+/// <see cref="Flush(bool)"/> — are on this class, not on that interface. Reaching them is a
+/// downcast, in <c>OnLoad</c>, and it is two steps rather than one:
+/// <code>
+/// protected override void OnLoad()
+/// {
+///     if (!Env.Surfaces.Caps.HasFlag(RenderCaps.GpuBacked))
+///     {
+///         throw new InvalidOperationException(
+///             "This scene renders through a GL texture and needs a GPU-backed target.");
+///     }
+///
+///     var gpu = (GpuSkiaSurfaceProvider)Env.Surfaces;
+///     // ... build the author's GL pipeline against gpu, here and nowhere earlier.
+/// }
+/// </code>
+/// The capability check first, and it is not ceremony around the cast: it is the check NAJM-SKIA I.7
+/// specifies, it is the one whose failure message is about the <em>target</em> rather than about a
+/// type name, and it stays correct when a second GPU backend exists and the cast does not. The cast
+/// second, for access only. No engine helper wraps this — a convenience over a language cast is a
+/// second name for a cast — but the order matters and this is the order.
+/// </para>
+/// <para>
+/// <strong>Do it in <c>OnLoad</c>, not in <c>Render</c>.</strong> <c>OnLoad</c> is the first moment
+/// <see cref="SceneEnvironment"/> exists and the last one before any frame has been paid for. A
+/// scene that discovers in <c>Render</c> that its target cannot do GL has already been loaded,
+/// ticked, and half drawn, and it will discover it again on every frame after.
+/// </para>
+/// <para>
 /// <strong>Sample counts become real here.</strong> A raster provider normalizes every requested
 /// count to one because CPU raster has no multisample render-target axis. A GPU target does, so this
 /// provider normalizes through <see cref="SurfaceSpec.NormalizeForGpu"/> against the device maximum
@@ -136,7 +168,14 @@ public sealed class GpuSkiaSurfaceProvider : ISurfaceProvider
             ownsGlContext ? glContext : null);
     }
 
-    /// <summary>Gets the capabilities every target this provider creates advertises.</summary>
+    /// <inheritdoc />
+    /// <remarks>
+    /// <see cref="RenderCaps.GpuBacked"/> is the flag the interop seam turns on: a drawable holding a
+    /// <see cref="GlTextureImage"/> is legal on this provider's targets and on no other shipping
+    /// configuration, and I.7 asks it to say so at attach rather than at draw. Reading it through
+    /// <c>Env.Surfaces.Caps</c> is how a scene decides; see the class remarks for what a scene does
+    /// after deciding, which is not the same question.
+    /// </remarks>
     public RenderCaps Caps => RenderCaps.SkiaSurface | RenderCaps.GpuBacked;
 
     /// <summary>Gets the largest texture extent the device supports, in pixels.</summary>
