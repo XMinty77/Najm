@@ -109,10 +109,16 @@ public sealed class FrameProbeTests
     }
 
     /// <summary>
-    /// Differently sized files: false from the identity check, a refusal from the difference report.
+    /// Differently sized files: false from the identity check, and a report that names both shapes
+    /// from the difference — the composition an acceptance test actually writes.
     /// </summary>
+    /// <remarks>
+    /// One wrong <c>--size</c> flag produces this pair, and the two members used to disagree about
+    /// it: the check answered and the report threw, so the obvious sequence of the two turned a
+    /// reportable difference into an unhandled exception.
+    /// </remarks>
     [TestMethod]
-    public void DifferentlySizedFilesAreNotIdenticalAndCannotBeDifferenced()
+    public void DifferentlySizedFilesAreNotIdenticalAndAreReportedAsSuch()
     {
         using var wide = PixelFrameLease.Rent(4, 3, PixelFormat.Rgba8888);
         wide.Pixels.Fill(255);
@@ -123,7 +129,14 @@ public sealed class FrameProbeTests
         var narrowPath = WritePng(narrow, "narrow");
 
         Assert.IsFalse(FrameProbe.AreIdentical(widePath, narrowPath));
-        Assert.ThrowsExactly<ArgumentException>(() => FrameProbe.Compare(widePath, narrowPath));
+
+        var difference = FrameProbe.Compare(widePath, narrowPath);
+
+        Assert.IsFalse(difference.HasMatchingGeometry);
+        Assert.IsFalse(difference.AreIdentical);
+        Assert.AreEqual(4, difference.Width);
+        Assert.AreEqual(3, difference.ReferenceWidth);
+        Assert.Contains("different geometry", difference.ToString());
     }
 
     /// <summary>A missing or unreadable file fails loudly rather than measuring nothing.</summary>

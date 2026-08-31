@@ -23,6 +23,17 @@ namespace Najm.Skia;
 /// like for like.
 /// </para>
 /// <para>
+/// <b>Two questions about the same pair: read once, ask twice.</b> Each member here decodes what it
+/// needs and throws it away, so <c>AreIdentical</c> followed by <c>Compare</c> decodes four images
+/// to answer one question about two. When both answers are wanted — the usual shape of an
+/// acceptance check, which reports what moved when the answer is "not identical" — call
+/// <see cref="Read"/> twice and hand the leases to <see cref="FrameComparison"/> in
+/// <c>Najm.Core</c>: <see cref="FrameComparison.AreIdentical"/> for the cheap verdict and
+/// <see cref="FrameComparison.Between"/> for the report, over the same two decoded frames.
+/// <see cref="Compare"/> alone also answers both, since its report carries
+/// <see cref="FrameDifference.AreIdentical"/>.
+/// </para>
+/// <para>
 /// This is diagnostic and offline. It touches the disk and reduces whole frames; nothing in a warm
 /// render path calls it, and nothing should.
 /// </para>
@@ -61,11 +72,21 @@ public static class FrameProbe
     /// <param name="referencePath">The image it is being held against.</param>
     /// <param name="format">The byte and alpha layout both are decoded into.</param>
     /// <remarks>
-    /// This is the report for when <see cref="AreIdentical"/> has already said no. It refuses files
-    /// of different sizes loudly, because a difference report over mismatched geometry would be a
-    /// number with no meaning.
+    /// <para>
+    /// The whole verdict, not only the follow-up: the returned report answers
+    /// <see cref="FrameDifference.AreIdentical"/> as well as how and where the frames differ, so a
+    /// caller that wants both does not need <see cref="AreIdentical"/> in front of it.
+    /// </para>
+    /// <para>
+    /// Files of different sizes are reported, not refused —
+    /// <see cref="FrameDifference.HasMatchingGeometry"/> is false and every magnitude is zero. That
+    /// pair is what one wrong <c>--size</c> flag produces, and an acceptance check that meets it
+    /// should print what happened rather than terminate on an unhandled exception.
+    /// </para>
     /// </remarks>
-    /// <exception cref="ArgumentException">A path is null or whitespace, or the images differ in size.</exception>
+    /// <seealso cref="Read"/>
+    /// <seealso cref="FrameComparison.Between"/>
+    /// <exception cref="ArgumentException">A path is null or whitespace.</exception>
     /// <exception cref="FileNotFoundException">One of the files does not exist.</exception>
     /// <exception cref="InvalidDataException">Skia could not decode one of the files.</exception>
     public static FrameDifference Compare(
@@ -84,12 +105,21 @@ public static class FrameProbe
     /// <param name="format">The byte and alpha layout both are decoded into.</param>
     /// <returns>True when both decode to the same size and the same bytes.</returns>
     /// <remarks>
+    /// <para>
     /// <b>Pixel-identical, not file-identical.</b> Two PNGs holding the same image can differ byte
     /// for byte on disk — a different encoder, a different compression level, a text chunk, a
     /// timestamp — so comparing the files themselves answers a question nobody asked. Differently
     /// sized images return false rather than throwing; they are not the same image, which is the
     /// answer requested.
+    /// </para>
+    /// <para>
+    /// This answers only that. Reaching for <see cref="Compare"/> afterwards to find out <em>what</em>
+    /// moved decodes both files a second time; <see cref="Compare"/> on its own answers both
+    /// questions from one pair of decodes, and the class remarks give the route for when the pixels
+    /// are wanted too.
+    /// </para>
     /// </remarks>
+    /// <seealso cref="Compare"/>
     /// <exception cref="ArgumentException">A path is null or whitespace.</exception>
     /// <exception cref="FileNotFoundException">One of the files does not exist.</exception>
     /// <exception cref="InvalidDataException">Skia could not decode one of the files.</exception>

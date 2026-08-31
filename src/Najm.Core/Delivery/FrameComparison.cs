@@ -12,6 +12,16 @@ namespace Najm.Core;
 /// mistake this split is here to prevent.
 /// </para>
 /// <para>
+/// <strong>The two members agree about mismatched geometry.</strong> Frames of different sizes are
+/// not the same image, so <see cref="AreIdentical"/> answers false and <see cref="Between"/> returns
+/// a report that says their geometry differs. They used to disagree — one answered, the other threw
+/// — which made the natural composition of the two, ask then explain, an unhandled exception on a
+/// pair of images a mistyped output size produces routinely. A pixel <em>format</em> mismatch is
+/// still refused loudly, and the difference is not arbitrary: sizes are a property of the images and
+/// worth reporting, while a format mismatch means the caller decoded the two frames differently and
+/// is a bug in the call, not an observation about the pictures.
+/// </para>
+/// <para>
 /// <strong>Comparison is byte-wise and therefore format-agnostic</strong>, provided both frames
 /// carry the same <see cref="PixelFormat"/>. Whether a channel is red or blue does not change
 /// whether it moved, nor by how much, nor the maximum over the four — so nothing here needs to
@@ -34,9 +44,9 @@ public static class FrameComparison
     /// </returns>
     /// <remarks>
     /// Frames of different sizes or formats return false rather than throwing: they are not the
-    /// same image, which is the question that was asked. <see cref="Between"/> takes the opposite
-    /// view, because a difference <em>report</em> over mismatched geometry would be a number with
-    /// no meaning.
+    /// same image, which is the question that was asked. <see cref="Between"/> agrees for sizes and
+    /// reports the mismatch; it still refuses mismatched <em>formats</em>, which are a fact about
+    /// the caller's decoding rather than about the images.
     /// </remarks>
     /// <exception cref="ArgumentNullException">Either frame is null.</exception>
     /// <exception cref="ObjectDisposedException">Either lease has been disposed.</exception>
@@ -68,13 +78,19 @@ public static class FrameComparison
     /// <summary>Measures what separates two frames of the same shape.</summary>
     /// <param name="pixels">The frame under test.</param>
     /// <param name="reference">The frame it is held against.</param>
-    /// <returns>A report that is <see cref="FrameDifference.AreIdentical"/> when nothing moved.</returns>
+    /// <returns>
+    /// A report that is <see cref="FrameDifference.AreIdentical"/> when nothing moved, and carries
+    /// <see cref="FrameDifference.HasMatchingGeometry"/> false — with every magnitude zero and
+    /// nothing measured — when the frames are different sizes.
+    /// </returns>
     /// <remarks>
-    /// Refuses mismatched size or format loudly, unlike <see cref="AreIdentical"/> — see that
-    /// member for why the two disagree deliberately.
+    /// Mismatched sizes are reported rather than refused: two frames of different shapes are a real
+    /// pair to compare, and the answer is that they do not correspond. Mismatched pixel formats are
+    /// still refused, because a byte-wise comparison across layouts would report every coloured
+    /// pixel as differing and be confidently wrong.
     /// </remarks>
     /// <exception cref="ArgumentNullException">Either frame is null.</exception>
-    /// <exception cref="ArgumentException">The frames differ in size or in pixel format.</exception>
+    /// <exception cref="ArgumentException">The frames differ in pixel format.</exception>
     /// <exception cref="ObjectDisposedException">Either lease has been disposed.</exception>
     public static FrameDifference Between(PixelFrameLease pixels, PixelFrameLease reference)
     {
@@ -83,11 +99,13 @@ public static class FrameComparison
 
         if (pixels.Width != reference.Width || pixels.Height != reference.Height)
         {
-            throw new ArgumentException(
-                $"Cannot difference a {pixels.Width}x{pixels.Height} frame against a "
-                + $"{reference.Width}x{reference.Height} one. A difference report over mismatched "
-                + "geometry has no meaning; use AreIdentical, which answers false for this case.",
-                nameof(reference));
+            // Reported, not refused: the sizes are the answer. Nothing is scanned, so every
+            // magnitude in this report is zero and HasMatchingGeometry is what a caller must read.
+            return FrameDifference.Mismatched(
+                pixels.Width,
+                pixels.Height,
+                reference.Width,
+                reference.Height);
         }
 
         if (pixels.Format != reference.Format)
@@ -192,10 +210,12 @@ public static class FrameComparison
             // the scan started from, so that a caller printing the box for an identical pair sees
             // nothing rather than int.MaxValue. The first-difference position is -1 instead,
             // because (0, 0) is a real position and zero there would name a pixel.
-            return new FrameDifference(width, height, 0L, 0, 0L, -1, -1, 0, 0, 0, 0);
+            return new FrameDifference(width, height, width, height, 0L, 0, 0L, -1, -1, 0, 0, 0, 0);
         }
 
         return new FrameDifference(
+            width,
+            height,
             width,
             height,
             differingPixels,

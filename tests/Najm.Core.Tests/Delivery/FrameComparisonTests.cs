@@ -133,9 +133,19 @@ public sealed class FrameComparisonTests
         Assert.AreEqual(209d / 12d, difference.MeanChannelDifference, 1e-12d);
     }
 
-    /// <summary>Mismatched geometry: false from one entry point, a refusal from the other.</summary>
+    /// <summary>
+    /// Mismatched geometry: false from one entry point and a report saying so from the other, which
+    /// is what makes the two composable.
+    /// </summary>
+    /// <remarks>
+    /// The pair used to disagree — one answered, the other threw — so the natural sequence of the
+    /// two, "is it identical, and if not what moved", was an unhandled exception for the pair a
+    /// mistyped output size produces. Every magnitude in the report is zero because nothing was
+    /// compared, which is why <see cref="FrameDifference.HasMatchingGeometry"/> and not a magnitude
+    /// is the thing to branch on.
+    /// </remarks>
     [TestMethod]
-    public void DifferentlySizedFramesAreNotIdenticalAndCannotBeDifferenced()
+    public void DifferentlySizedFramesAreNotIdenticalAndAreReportedAsSuch()
     {
         using var small = TestFrame.Uniform(4, 4, 0, 0, 0);
         using var wide = TestFrame.Uniform(5, 4, 0, 0, 0);
@@ -144,10 +154,27 @@ public sealed class FrameComparisonTests
         Assert.IsFalse(FrameComparison.AreIdentical(small, wide));
         Assert.IsFalse(FrameComparison.AreIdentical(small, tall));
 
-        var failure = Assert.ThrowsExactly<ArgumentException>(() => FrameComparison.Between(small, wide));
-        Assert.Contains("4x4", failure.Message, "The refusal has to name both shapes.");
-        Assert.Contains("5x4", failure.Message);
-        Assert.ThrowsExactly<ArgumentException>(() => FrameComparison.Between(small, tall));
+        var difference = FrameComparison.Between(small, wide);
+
+        Assert.IsFalse(difference.HasMatchingGeometry);
+        Assert.IsFalse(difference.AreIdentical, "different shapes are never identical");
+        Assert.AreEqual(4, difference.Width, "the frame under test's shape");
+        Assert.AreEqual(4, difference.Height);
+        Assert.AreEqual(5, difference.ReferenceWidth, "and the reference's, both named");
+        Assert.AreEqual(4, difference.ReferenceHeight);
+        Assert.AreEqual(0L, difference.PixelCount, "nothing was compared, so nothing was counted");
+        Assert.AreEqual(0L, difference.DifferingPixels);
+        Assert.AreEqual(0, difference.MaxChannelDifference);
+        Assert.AreEqual(-1, difference.FirstDifferenceX);
+        Assert.AreEqual(0, difference.BoundsWidth, "an empty box is empty, not one pixel across");
+        Assert.AreEqual(0, difference.BoundsHeight);
+        Assert.Contains("4x4", difference.ToString(), "the summary has to name both shapes");
+        Assert.Contains("5x4", difference.ToString());
+
+        Assert.IsFalse(FrameComparison.Between(small, tall).HasMatchingGeometry);
+        Assert.IsTrue(
+            FrameComparison.Between(small, TestFrame.Uniform(4, 4, 1, 1, 1)).HasMatchingGeometry,
+            "and a matching pair reports matching geometry, identical or not");
     }
 
     /// <summary>

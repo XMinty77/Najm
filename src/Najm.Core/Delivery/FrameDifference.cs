@@ -17,6 +17,15 @@ namespace Najm.Core;
 /// Alpha counts as a channel like any other.
 /// </para>
 /// <para>
+/// <strong>"Different shapes" is one of the answers.</strong> Two frames of different sizes are a
+/// real pair to hold against each other — a wrong <c>--size</c> flag produces one — and the honest
+/// report for them is that their geometry differs, not an exception. Such a report has
+/// <see cref="HasMatchingGeometry"/> false, <see cref="AreIdentical"/> false, and <strong>every
+/// magnitude zero, because nothing was measured</strong>: no pixel in one frame has a counterpart
+/// in the other. Read the verdict, not the numbers — a caller that branches on
+/// <c>DifferingPixels == 0</c> alone will read a geometry mismatch as a match.
+/// </para>
+/// <para>
 /// <c>default(FrameDifference)</c> is not a meaningful value; obtain one from
 /// <see cref="FrameComparison"/>.
 /// </para>
@@ -26,6 +35,8 @@ public readonly struct FrameDifference
     internal FrameDifference(
         int width,
         int height,
+        int referenceWidth,
+        int referenceHeight,
         long differingPixels,
         int maxChannelDifference,
         long channelDifferenceSum,
@@ -38,6 +49,8 @@ public readonly struct FrameDifference
     {
         Width = width;
         Height = height;
+        ReferenceWidth = referenceWidth;
+        ReferenceHeight = referenceHeight;
         DifferingPixels = differingPixels;
         MaxChannelDifference = maxChannelDifference;
         ChannelDifferenceSum = channelDifferenceSum;
@@ -49,23 +62,47 @@ public readonly struct FrameDifference
         BoundsBottom = boundsBottom;
     }
 
+    /// <summary>Builds the report for two frames whose shapes do not correspond.</summary>
+    internal static FrameDifference Mismatched(
+        int width,
+        int height,
+        int referenceWidth,
+        int referenceHeight) =>
+        new(width, height, referenceWidth, referenceHeight, 0L, 0, 0L, -1, -1, 0, 0, 0, 0);
+
     /// <summary>Gets whether the two frames are byte-identical.</summary>
     /// <remarks>
     /// This is the check the project reaches for most: goldens, no-op parameter verification, and
     /// "did removing that workaround change anything" are all this question. It is exact — no
     /// tolerance, no perceptual weighting — because the whole value of the answer is that it admits
-    /// no argument.
+    /// no argument. Frames of different shapes are never identical, whatever their pixels hold.
     /// </remarks>
-    public bool AreIdentical => DifferingPixels == 0L;
+    public bool AreIdentical => HasMatchingGeometry && DifferingPixels == 0L;
 
-    /// <summary>Gets the compared frames' shared width in pixels.</summary>
+    /// <summary>Gets whether the two frames have the same width and height.</summary>
+    /// <remarks>
+    /// False makes every other number here meaningless rather than merely zero: nothing was
+    /// compared, because there was no correspondence to compare along. Test this before reading a
+    /// magnitude, or read <see cref="AreIdentical"/>, which already accounts for it.
+    /// </remarks>
+    public bool HasMatchingGeometry => Width == ReferenceWidth && Height == ReferenceHeight;
+
+    /// <summary>Gets the width in pixels of the frame under test.</summary>
     public int Width { get; }
 
-    /// <summary>Gets the compared frames' shared height in pixels.</summary>
+    /// <summary>Gets the height in pixels of the frame under test.</summary>
     public int Height { get; }
 
-    /// <summary>Gets the number of pixels compared.</summary>
-    public long PixelCount => (long)Width * Height;
+    /// <summary>Gets the width in pixels of the reference frame, which equals <see cref="Width"/>
+    /// unless the geometry differs.</summary>
+    public int ReferenceWidth { get; }
+
+    /// <summary>Gets the height in pixels of the reference frame, which equals <see cref="Height"/>
+    /// unless the geometry differs.</summary>
+    public int ReferenceHeight { get; }
+
+    /// <summary>Gets the number of pixels compared, which is zero when the geometry differs.</summary>
+    public long PixelCount => HasMatchingGeometry ? (long)Width * Height : 0L;
 
     /// <summary>Gets how many pixels differ in at least one channel.</summary>
     public long DifferingPixels { get; }
@@ -119,15 +156,33 @@ public readonly struct FrameDifference
     /// <summary>Gets the bottommost row containing a difference, inclusive, or zero if identical.</summary>
     public int BoundsBottom { get; }
 
-    /// <summary>Gets the width of the region containing every difference, or zero if identical.</summary>
-    public int BoundsWidth => AreIdentical ? 0 : BoundsRight - BoundsLeft + 1;
+    /// <summary>
+    /// Gets the width of the region containing every difference, or zero if identical or if the
+    /// geometry differs.
+    /// </summary>
+    public int BoundsWidth => HasNoLocatedDifference ? 0 : BoundsRight - BoundsLeft + 1;
 
-    /// <summary>Gets the height of the region containing every difference, or zero if identical.</summary>
-    public int BoundsHeight => AreIdentical ? 0 : BoundsBottom - BoundsTop + 1;
+    /// <summary>
+    /// Gets the height of the region containing every difference, or zero if identical or if the
+    /// geometry differs.
+    /// </summary>
+    public int BoundsHeight => HasNoLocatedDifference ? 0 : BoundsBottom - BoundsTop + 1;
+
+    /// <summary>
+    /// Gets whether there is no located difference to describe — either nothing moved, or nothing
+    /// was compared.
+    /// </summary>
+    /// <remarks>
+    /// The empty box is four zeroes in both cases, so the extent has to be derived from the verdict
+    /// rather than from the bounds; otherwise an empty box would measure one pixel across.
+    /// </remarks>
+    private bool HasNoLocatedDifference => !HasMatchingGeometry || DifferingPixels == 0L;
 
     /// <summary>Renders the comparison as one line, for a report or an assertion message.</summary>
     public override string ToString() =>
-        AreIdentical
+        !HasMatchingGeometry
+            ? $"different geometry: {Width}x{Height} against {ReferenceWidth}x{ReferenceHeight}"
+            : AreIdentical
             ? $"identical ({Width}x{Height})"
             : $"{DifferingPixels} of {PixelCount} pixels differ ({DifferingFraction:P3}), " +
                 $"worst {MaxChannelDifference} levels, mean {MeanChannelDifference:0.###} levels, " +

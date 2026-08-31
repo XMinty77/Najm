@@ -1003,6 +1003,63 @@ pattern, loses its `OnUnload` entirely.
 
 ---
 
+## 23. A frame difference can report mismatched geometry instead of refusing it
+
+**Docs:** the frame diagnostics are Najm's own addition (deviation 15); the
+reference describes no comparison at all, so this refines that entry rather than
+departing from a document.
+
+**Decision:** `FrameComparison.Between` — and `FrameProbe.Compare` over it — now
+*report* two frames of different sizes rather than throwing. `FrameDifference`
+gains `HasMatchingGeometry`, `ReferenceWidth` and `ReferenceHeight`;
+`AreIdentical` requires matching geometry; `PixelCount` and every magnitude are
+zero for such a report, because nothing was compared; `ToString` says "different
+geometry: 1024x1024 against 1920x1080". A pixel *format* mismatch still throws.
+
+**Why:** deviation 15 gave the two members deliberately different answers for the
+same pair — `AreIdentical` returns false, `Between` threw — and each documented
+its own choice. Both were defensible alone and the composition was not: the first
+production to use them as an acceptance test wrote
+
+```csharp
+if (FrameProbe.AreIdentical(outPath, expectPath)) { … }
+var difference = FrameProbe.Compare(outPath, expectPath);   // ArgumentException
+```
+
+which is how anyone will write it, and one wrong `--size` flag turns a reportable
+difference into an unhandled exception at the end of a long render. The original
+justification — "a difference report over mismatched geometry would be a number
+with no meaning" — was true only because the report could not say the geometry
+differed. Now it can, and reporting is strictly more useful than refusing: the
+sizes *are* the answer.
+
+**Why format stays a throw.** A size mismatch is a fact about the images and worth
+reporting. A format mismatch means the caller decoded the two frames into
+different layouts, which is a bug in the call rather than an observation about the
+pictures, and a byte-wise comparison across layouts would report every coloured
+pixel as differing — confidently and wrongly. The two cases are not symmetric and
+are not treated symmetrically.
+
+**The cost.** A report whose magnitudes are all zero could be mistaken for a match
+by a caller branching on `DifferingPixels == 0` instead of on the verdict. The
+alternative was inventing numbers — "every pixel differs", a fabricated maximum —
+which would be worse, so the zeroes stay and `AreIdentical`, `HasMatchingGeometry`
+and `ToString` all state the case. `BoundsWidth`/`BoundsHeight` derive their
+emptiness from the verdict rather than from the box, so an empty box does not
+measure one pixel across.
+
+**Also from the same report, without behaviour change:** `FrameProbe`'s class
+remarks now give the two-decode route for callers that want both answers
+(`Read` twice, then `FrameComparison`), which crosses an assembly and a namespace
+and was not discoverable from the members that made a caller want it; and
+`AreIdentical` and `Compare` carry `<seealso>` links to it. The third friction
+reported — no file-level check that also reports a size mismatch — is answered by
+`Compare` itself, which now returns exactly that.
+
+**Status:** Implemented.
+
+---
+
 ## Documentation conflicts
 
 Places where the reference set disagrees with itself. Recorded so the
