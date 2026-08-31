@@ -62,6 +62,13 @@ internal sealed class Routine : IScheduled
                 }
 
                 return;
+            case WaitKind.Until:
+                if (EvaluateUntil())
+                {
+                    Advance();
+                }
+
+                return;
             case WaitKind.ForRoutine:
                 if (((Routine)current.Target!).Status != RoutineStatus.Running)
                 {
@@ -123,13 +130,57 @@ internal sealed class Routine : IScheduled
             ((Animation)current.Target!).Complete();
         }
 
-        Advance();
+        // Resume, not Advance: a step resumes exactly once by contract, so landing on an
+        // already-true Until leaves that wait for the next pass rather than running on through it.
+        Resume();
         return true;
     }
 
-    /// <summary>Runs the enumerator to its next yield, adopting whatever wait it produced.</summary>
+    /// <summary>Resumes once, and on through any <c>Until</c> wait whose predicate already holds.</summary>
+    /// <remarks>
+    /// The loop is what makes <see cref="Wait.Until(Func{bool})"/> the inline spin exactly: a spin
+    /// tests its condition before suspending and costs no frame when it already holds, so a wait
+    /// claiming to replace one cannot suspend first and ask afterwards.
+    /// </remarks>
     private void Advance()
     {
+        while (Resume() && current.Kind == WaitKind.Until && EvaluateUntil())
+        {
+        }
+    }
+
+    /// <summary>Evaluates the current <c>Until</c> predicate, faulting the routine if it throws.</summary>
+    /// <remarks>
+    /// A throw from the predicate is treated exactly as a throw from the routine's body: the
+    /// routine is faulted, its enumerator is disposed so the author's <c>finally</c> blocks run, and
+    /// the exception propagates out of the pass. The predicate is documented as a pure read, so
+    /// there is no state to unwind beyond that.
+    /// </remarks>
+    private bool EvaluateUntil()
+    {
+        try
+        {
+            return ((Func<bool>)current.Target!)();
+        }
+        catch
+        {
+            Status = RoutineStatus.Faulted;
+            enumerator.Dispose();
+            throw;
+        }
+    }
+
+    /// <summary>Runs the enumerator to its next yield, adopting whatever wait it produced.</summary>
+    /// <returns>True when the routine is still running and has adopted a new wait.</returns>
+    private bool Resume()
+    {
+        if (Status != RoutineStatus.Running)
+        {
+            // Reachable only from a predicate that cancelled its own routine, which has already
+            // disposed the enumerator: driving it again would run the author's cleanup twice.
+            return false;
+        }
+
         bool moved;
         resuming = true;
         try
@@ -152,13 +203,13 @@ internal sealed class Routine : IScheduled
         {
             disposeDeferred = false;
             enumerator.Dispose();
-            return;
+            return false;
         }
         if (!moved)
         {
             Status = RoutineStatus.Completed;
             enumerator.Dispose();
-            return;
+            return false;
         }
 
         var next = enumerator.Current;
@@ -169,5 +220,6 @@ internal sealed class Routine : IScheduled
 
         current = next;
         accumulated = 0d;
+        return true;
     }
 }

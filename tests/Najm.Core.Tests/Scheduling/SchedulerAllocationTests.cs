@@ -30,6 +30,7 @@ public sealed class SchedulerAllocationTests
         var sceneTweenWrites = 0;
         var nodeTweenWrites = 0;
         var joinPolls = 0;
+        var untilEvaluations = 0;
 
         IEnumerator<Wait> EveryFrame(Action onResume)
         {
@@ -45,11 +46,23 @@ public sealed class SchedulerAllocationTests
             yield return Wait.Seconds(NeverEnds);
         }
 
+        // A parked Until: the delegate is built once, when the wait is yielded, and every pass after
+        // that is one interface-free invocation through the wait's object field.
+        IEnumerator<Wait> Conditional()
+        {
+            yield return Wait.Until(() =>
+            {
+                untilEvaluations++;
+                return false;
+            });
+        }
+
         // Scene-owned and node-owned alike, so the pass walks both the no-owner path and the
         // ancestor-chain eligibility path on every tick.
         var sceneRoutine = scene.Start(EveryFrame(() => sceneRoutineResumes++));
         var secondsRoutine = scene.Start(Accumulating());
         var nodeRoutine = node.Start(EveryFrame(() => nodeRoutineResumes++));
+        var untilRoutine = scene.Start(Conditional());
 
         var sceneTween = scene.Animate(_ => sceneTweenWrites++, from: 0f, to: 1f, duration: NeverEnds);
         var nodeTween = node.Animate(_ => nodeTweenWrites++, from: 0f, to: 1f, duration: NeverEnds);
@@ -89,11 +102,16 @@ public sealed class SchedulerAllocationTests
             "one write per tick, plus the from-value applied at the Animate call site");
         Assert.AreEqual(ticked + 1, nodeTweenWrites);
         Assert.AreEqual(1, joinPolls, "the joiner is still suspended on its animation, polled every pass");
+        Assert.AreEqual(
+            ticked,
+            untilEvaluations,
+            "the parked condition was evaluated once per pass, allocating nothing to do it");
 
         Assert.AreEqual(RoutineStatus.Running, sceneRoutine.Status);
         Assert.AreEqual(RoutineStatus.Running, secondsRoutine.Status);
         Assert.AreEqual(RoutineStatus.Running, nodeRoutine.Status);
         Assert.AreEqual(RoutineStatus.Running, joiner.Status);
+        Assert.AreEqual(RoutineStatus.Running, untilRoutine.Status);
         Assert.AreEqual(RoutineStatus.Running, sceneTween.Status);
         Assert.AreEqual(RoutineStatus.Running, nodeTween.Status);
     }

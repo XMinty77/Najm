@@ -473,6 +473,7 @@ public sealed class CoroutinePassTests
         Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => Wait.Seconds(double.NaN));
         Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => Wait.Seconds(double.PositiveInfinity));
         Assert.ThrowsExactly<ArgumentNullException>(() => Wait.For((IEnumerator<Wait>)null!));
+        Assert.ThrowsExactly<ArgumentNullException>(() => Wait.Until(null!));
         Assert.AreEqual(Wait.NextFrame, default(Wait), "the default wait is NextFrame, not a broken one");
     }
 

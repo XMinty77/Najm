@@ -781,6 +781,66 @@ unreachable.
 
 ---
 
+## 19. `Wait.Until` evaluates its predicate in the pass that yields it
+
+**Docs:** §10.3's wait table gives `Wait.Until(pred)` as "resume on the first pass
+where `pred` is true", and the per-wait note adds that `pred` "is evaluated **once
+per eligible pass**, during the pass — treat it as a pure read of scene state".
+§10.4's `Step` table lists `Until` among the waits a step deems satisfied with
+`pred` not called. What none of them settles is whether the pass that *yields* the
+wait is one of the passes the predicate is evaluated in.
+
+**Decision:** it is. The predicate is evaluated at the moment the wait is yielded,
+still inside that pass, and once per eligible pass after that; a predicate that
+already holds resumes the routine in the same pass, with no suspension. Everything
+else follows the reference: not evaluated for a paused routine or one under a
+disabled owner, not evaluated by `Step`, and — Najm's own choice, since the
+reference does not say — a throw from the predicate faults the routine exactly as
+a throw from its body does, disposing the enumerator so the author's `finally`
+blocks run.
+
+**Why:** `Until` exists to replace `while (!c) yield return Wait.NextFrame;`, and a
+spin tests its condition **before** it suspends. Under the other reading —
+suspend, then ask at the next pass — a condition that already holds costs the spin
+nothing and costs `Until` one frame, so replacing one with the other would retime
+the routine by a frame in exactly the cases where the condition is cheap to
+satisfy. That is the defect this member was built to remove, and an implementation
+that reintroduced it one call site over would be worse than not having the member:
+the trap would now be inside the engine's own convenience rather than in the
+author's spelling. The eager reading is also the more literal one — "the first
+pass where `pred` is true" includes the pass in which the wait was created.
+
+The cost of the choice is one shape of author bug that the spin cannot produce: a
+loop whose body yields nothing but already-true `Until` waits never returns control
+to the pass. It is the same infinite loop as a `while (true)` body with no `yield`
+in it, reached a less obvious way, and it is documented on the member.
+
+`Step` is the one place the two readings are not reconciled, and deliberately: a
+step that landed on an already-true `Until` and ran on through it would resume the
+routine twice, breaking `Step`'s documented "resumes exactly once". A stepped
+routine therefore leaves such a wait to the next pass.
+
+**The other half of the same finding.** §10.2's FIFO rule says nesting "compose[s]
+without a one-frame hiccup". That is true of the **entry** — a child started by
+`Wait.For(routine)` is appended to the queue and gets its first resume later in the
+same pass — and false of the **exit**: the pass drains once per tick in enqueue
+order and a parent sits ahead of any child it started, so the child's completion is
+not observed until the next pass. One pass per level of nesting, at the rejoin.
+
+Nothing in the implementation changes here; the behaviour is what the FIFO rule
+already implies and it is not obviously wrong. What was wrong is that only the
+favourable half was written down, on a member whose whole purpose is to be hidden
+behind a helper's name — so an author who factors a spin into a helper silently
+moves the thing it was waiting for by a frame. It is now stated on
+`Wait.For(IEnumerator<Wait>)` and on `Wait.For(CoroutineHandle)`, next to the entry
+claim, with `Wait.Until` named as the way to avoid paying it. `Wait.For(AnimationHandle)`
+genuinely does not pay it, because the tween pass completes before the coroutine
+pass begins, and says so.
+
+**Status:** Implemented.
+
+---
+
 ## Documentation conflicts
 
 Places where the reference set disagrees with itself. Recorded so the
