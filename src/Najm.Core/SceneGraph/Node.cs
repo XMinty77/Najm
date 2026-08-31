@@ -365,11 +365,27 @@ public abstract class Node
     internal void InvokeRender(IDrawContext2D context) => Render(context);
 
     /// <summary>Runs when this node becomes attached to a loaded scene.</summary>
+    /// <remarks>
+    /// Paired with <see cref="OnDetach"/>, and the pair can run more than once for one node: a
+    /// re-parent within a live scene is a detach followed by an attach. Acquire per-attachment state
+    /// here and release it in <see cref="OnDetach"/>; anything that must be built once and released
+    /// once belongs to the object's constructor and to <c>Scene.Own</c>.
+    /// </remarks>
     protected virtual void OnAttach()
     {
     }
 
     /// <summary>Runs when this node leaves its loaded scene.</summary>
+    /// <remarks>
+    /// <strong>This is not a disposal hook, and a native resource must not be released here.</strong>
+    /// It runs for <em>every</em> detach — removing a node in order to add it somewhere else in the
+    /// same scene is one — so freeing a GL texture or a framebuffer here would destroy the target of
+    /// a node that is about to be live again, and nothing about the signature would warn the author.
+    /// The engine has no "this node is gone for good" notion to offer instead: a re-parent and a
+    /// removal are the same event, distinguishable only by what the author does next. For a resource
+    /// whose life is the scene's, register it with <c>Scene.Own</c>, which has an end the engine
+    /// controls; for one that genuinely dies here, dispose it at the call site that removed the node.
+    /// </remarks>
     protected virtual void OnDetach()
     {
     }

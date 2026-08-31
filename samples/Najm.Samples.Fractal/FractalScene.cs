@@ -11,8 +11,10 @@ namespace Najm.Samples.Fractal;
 /// <remarks>
 /// <para>
 /// <strong>The scene owns the GL pipeline.</strong> It is created in <see cref="OnLoad"/>, where the
-/// environment first exists, and torn down in <see cref="OnUnload"/>, before the environment goes.
-/// That is the only window in which the GL context is guaranteed current and the provider alive.
+/// environment first exists, and handed to <c>Own</c>, which releases it after the last frame and
+/// before the environment goes. That is the only window in which the GL context is guaranteed
+/// current and the provider alive, and registering the texture at the moment it is built means a
+/// load that fails after this line still releases it.
 /// </para>
 /// <para>
 /// <strong>The GL work happens in <see cref="Update"/>, not in a node's <c>Render</c>.</strong>
@@ -33,7 +35,6 @@ internal sealed class FractalScene : Scene
     private readonly IFlight flight;
     private readonly int samples;
     private FractalTexture? texture;
-    private FractalGpu? pipeline;
     private FractalUniforms current;
 
     /// <summary>Creates a scene that follows <paramref name="flight"/> at the given sample count.</summary>
@@ -64,13 +65,14 @@ internal sealed class FractalScene : Scene
 
         var gpu = (GpuSkiaSurfaceProvider)Env.Surfaces;
 
-        pipeline = new FractalGpu(Design.Frame, samples);
+        var pipeline = new FractalGpu(Design.Frame, samples);
 
         // Constructing the pipeline compiled a program and allocated a texture behind Skia's back.
         // Say so before Skia draws anything again.
         gpu.ResetGlState();
 
-        texture = new FractalTexture(gpu, pipeline);
+        // The texture disposes the pipeline with it, so one registration covers both.
+        texture = Own(new FractalTexture(gpu, pipeline));
         current = flight.At(0d);
         texture.Advance(current);
 
@@ -90,13 +92,6 @@ internal sealed class FractalScene : Scene
         texture!.Advance(current);
     }
 
-    /// <inheritdoc />
-    protected override void OnUnload()
-    {
-        texture?.Dispose();
-        texture = null;
-        pipeline = null;
-    }
 
     /// <summary>Converts the live uniforms into the instrument's already-normalized terms.</summary>
     private InstrumentReading Reading()

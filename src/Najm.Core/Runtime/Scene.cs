@@ -19,6 +19,7 @@ public class Scene
     private readonly Scheduler scheduler;
     private readonly Vector2 virtualResolution = DefaultVirtualResolution;
     private SceneEnvironment? environment;
+    private List<IDisposable>? owned;
     private ICompositor? compositor;
     private SceneState state;
     private bool loadCompleted;
@@ -390,6 +391,72 @@ public class Scene
     /// </remarks>
     public bool HasScheduledWork => scheduler.HasLiveWork;
 
+    /// <summary>
+    /// Hands a native or otherwise disposable resource to the scene, which releases it when the
+    /// scene's life ends, and returns it.
+    /// </summary>
+    /// <typeparam name="T">The resource type.</typeparam>
+    /// <param name="resource">The resource whose lifetime is this scene's.</param>
+    /// <returns><paramref name="resource"/>, so the call can wrap the construction that produced it.</returns>
+    /// <remarks>
+    /// <para>
+    /// For a node that owns something the garbage collector will not release — a GL texture, a
+    /// framebuffer, an external image wrapping one — written as
+    /// <c>renderer = Own(new GlBackedNode(...));</c> in <see cref="OnLoad"/>. It replaces the
+    /// <see cref="OnUnload"/> override that would otherwise exist only to null a field and call
+    /// <c>Dispose</c> on it.
+    /// </para>
+    /// <para>
+    /// <strong>Scene lifetime, not node lifetime, and that is the honest offer.</strong> The engine
+    /// has no "this node is gone for good" signal to hang disposal on:
+    /// <see cref="Node.OnDetach"/> runs for <em>any</em> detach, re-parenting inside a live scene
+    /// included, so releasing a native resource there would destroy the target of a node that is
+    /// about to be added back. A scene, by contrast, has exactly one end, the engine controls it,
+    /// and it happens on every path. So the scene is where ownership can be promised and this is
+    /// where it is offered. A node that genuinely dies mid-scene is disposed at the call site that
+    /// removed it, by the code that decided it was finished.
+    /// </para>
+    /// <para>
+    /// <strong>Order.</strong> Resources are disposed last-registered-first, after
+    /// <see cref="OnUnload"/> has returned and after every layer has been detached — so the author's
+    /// own teardown and every node's <see cref="Node.OnDetach"/> still see live resources — and
+    /// before the compositor is released. Reverse order is what makes a wrap registered over a
+    /// texture release before the texture it borrowed the name of.
+    /// </para>
+    /// <para>
+    /// <strong>It also covers the path an <see cref="OnUnload"/> override cannot.</strong> A load
+    /// that fails part way through leaves the scene faulted without ever running
+    /// <see cref="OnUnload"/>, so a resource acquired earlier in <see cref="OnLoad"/> would have no
+    /// route to release at all. Anything registered before the failure is released by the rollback.
+    /// </para>
+    /// <para>
+    /// A <c>Dispose</c> that throws does not stop the others: every remaining resource is still
+    /// released and the failures are reported together, the way the rest of scene teardown reports
+    /// them.
+    /// </para>
+    /// </remarks>
+    /// <exception cref="ArgumentNullException"><paramref name="resource"/> is null.</exception>
+    /// <exception cref="InvalidOperationException">
+    /// The scene has already begun tearing down, so nothing registered now would ever be released.
+    /// </exception>
+    protected T Own<T>(T resource)
+        where T : class, IDisposable
+    {
+        ArgumentNullException.ThrowIfNull(resource);
+        if (state is not (
+            SceneState.Constructed or
+            SceneState.Loading or
+            SceneState.Loaded or
+            SceneState.Starting or
+            SceneState.Started))
+        {
+            throw InvalidTransition(nameof(Own), state);
+        }
+
+        (owned ??= []).Add(resource);
+        return resource;
+    }
+
     /// <summary>Runs after the engine has attached the scene's initial layers.</summary>
     protected virtual void OnLoad()
     {
@@ -488,10 +555,19 @@ public class Scene
         }
         catch (Exception original)
         {
-            var cleanup = runtime.RollbackLoad(snapshot);
+            var cleanup = new List<Exception>(runtime.RollbackLoad(snapshot));
+
+            // The one path where the author's OnUnload never runs: whatever OnLoad had already
+            // acquired when it failed is released here or not at all.
+            DisposeOwned(cleanup);
             var disposal = ReleaseComposition();
+            if (disposal is not null)
+            {
+                cleanup.Add(disposal);
+            }
+
             state = SceneState.Faulted;
-            ThrowCombined(original, disposal is null ? cleanup : Append(cleanup, disposal));
+            ThrowCombined(original, cleanup);
             throw;
         }
     }
@@ -576,6 +652,10 @@ public class Scene
             // still live and still holding an undisposed enumerator.
             scheduler.CancelAll(failures);
             failures.AddRange(runtime.DetachAllLayers());
+
+            // After OnUnload and after every OnDetach, so author teardown sees live resources, and
+            // before the compositor, which the backend those resources came from may outlive.
+            DisposeOwned(failures);
             var disposal = ReleaseComposition();
             if (disposal is not null)
             {
@@ -662,6 +742,33 @@ public class Scene
     /// keep claiming the other. Note what is <em>not</em> disposed — the provider, the typesetter,
     /// and the audio sink all outlive the scene and belong to whoever injected them.
     /// </remarks>
+    /// <summary>Releases everything <see cref="Own{T}"/> registered, newest first.</summary>
+    /// <remarks>
+    /// The list is dropped as it is emptied, so a second teardown — an <see cref="Unload"/> after a
+    /// failed <see cref="Load"/>, say — cannot dispose anything twice.
+    /// </remarks>
+    private void DisposeOwned(List<Exception> failures)
+    {
+        var resources = owned;
+        owned = null;
+        if (resources is null)
+        {
+            return;
+        }
+
+        for (var index = resources.Count - 1; index >= 0; index--)
+        {
+            try
+            {
+                resources[index].Dispose();
+            }
+            catch (Exception exception)
+            {
+                failures.Add(exception);
+            }
+        }
+    }
+
     private Exception? ReleaseComposition()
     {
         var owned = compositor;
@@ -681,14 +788,6 @@ public class Scene
         {
             return exception;
         }
-    }
-
-    private static IReadOnlyList<Exception> Append(IReadOnlyList<Exception> failures, Exception added)
-    {
-        var combined = new List<Exception>(failures.Count + 1);
-        combined.AddRange(failures);
-        combined.Add(added);
-        return combined;
     }
 
     private static InvalidOperationException InvalidTransition(string operation, SceneState current) =>

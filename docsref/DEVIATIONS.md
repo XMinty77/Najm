@@ -945,6 +945,64 @@ stated length, not an absent one.
 
 ---
 
+## 22. `Scene.Own` — resource ownership is the scene's, because a node has no end
+
+**Docs:** §4.1 gives `Scene` its four lifecycle hooks and §6 gives `Node`
+`OnAttach`/`OnDetach`. Neither the reference nor the compositor document says
+anything about a scene object owning something the garbage collector will not
+free; the scene graph is a 2-D drawing model and nothing in it is native.
+
+**Decision:** add `protected T Own<T>(T resource) where T : class, IDisposable` to
+`Scene`. Registered resources are released last-first, after `OnUnload` and after
+every layer has detached, before the compositor is released — and also on the
+failed-load rollback. `Node.OnDetach`'s remarks now say, on the member itself,
+that it is not a disposal hook and why.
+
+**Why:** an interop node — a GL framebuffer, a GL texture, and the engine's wrap
+over that texture, which must be released in that order because the wrap borrows
+the name — has nowhere good to release them. Three such nodes now exist across two
+repositories, and every scene holding one carries the same override:
+
+```csharp
+protected override void OnUnload()
+{
+    renderer?.Dispose();
+    renderer = null;
+}
+```
+
+which in the smallest of those scenes is two thirds of everything the scene does
+beyond its three-statement floor.
+
+**Why not on the node, which is where it was asked for.** `OnDetach` runs for
+*any* detach, and re-parenting a node inside a live scene is a detach followed by
+an attach. A node that freed its texture there would destroy the target of a node
+that is about to be visible again, and the signature gives no hint. There is no
+honest "this node is gone for good" signal to add either: a removal and a
+re-parent are the same event, separated only by what the author does next, and any
+engine-side guess — dispose at end of flush unless re-added, say — would be a
+heuristic making an irreversible decision. A scene has exactly one end, the engine
+controls it, and it happens on every path. So ownership is offered at the lifetime
+that can actually be promised, and the node case is answered with documentation
+rather than with a hook that would be wrong in a way nobody could see.
+
+**The part that is not convenience.** A load that throws part way through leaves
+the scene faulted and never runs `OnUnload`, so a resource acquired earlier in
+`OnLoad` had no route to release at all — the hand-written pattern cannot cover
+that path, and this does. `Own` returns its argument so registration happens at
+the moment of construction (`texture = Own(new FractalTexture(...));`), which is
+what makes that coverage automatic rather than something to remember.
+
+A `Dispose` that throws does not stop the others; its failure joins the same
+aggregate the rest of scene teardown reports through.
+
+**Adopted in the tree:** `samples/Najm.Samples.Fractal`, which was the same
+pattern, loses its `OnUnload` entirely.
+
+**Status:** Implemented.
+
+---
+
 ## Documentation conflicts
 
 Places where the reference set disagrees with itself. Recorded so the
