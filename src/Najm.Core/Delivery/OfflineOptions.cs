@@ -10,9 +10,13 @@ namespace Najm.Core;
 /// </remarks>
 public sealed class OfflineOptions
 {
+    /// <summary>The open-ended run's default ceiling: one hour of simulated time.</summary>
+    private const double DefaultLimitSeconds = 3600d;
+
     private readonly double framesPerSecond = 60d;
     private readonly double? duration;
     private readonly long? frames;
+    private readonly long? maxFrames;
     private readonly float scale = 1f;
     private readonly int sampleCount = 1;
     private readonly PixelFormat format = PixelFormat.Rgba8888;
@@ -58,13 +62,31 @@ public sealed class OfflineOptions
     }
 
     /// <summary>
-    /// Gets the run length in simulated seconds, or null when <see cref="Frames"/> supplies the
-    /// length instead.
+    /// Gets the run length in simulated seconds, or null to let <see cref="Frames"/> or the scene
+    /// itself supply the length.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// A duration is converted with <see cref="FixedStepTiming.TicksForStill(double, double)"/>, so
     /// 0.5 seconds at 60 fps is exactly 30 frames and any positive fraction of a frame rounds up to
     /// a whole frame.
+    /// </para>
+    /// <para>
+    /// <strong>Null here and null in <see cref="Frames"/> means "until the scene's scheduled work
+    /// finishes"</strong> — see <see cref="RunsUntilIdle"/>. The run then ticks until
+    /// <see cref="Scene.HasScheduledWork"/> is false after a tick, and that tick's frame is the last
+    /// one submitted. This exists because the alternative is a scene publishing its own length by
+    /// hand, summing its beat constants, and being wrong: waits add whole frames that no constant
+    /// can see — a spin on a condition, a rejoin from a helper routine — so the sum comes out short
+    /// and the clip is cut before the choreography ends, silently. The scheduler knows when the
+    /// routines are done and nothing else does.
+    /// </para>
+    /// <para>
+    /// The cost of that mode is that its length is discovered rather than declared: the sink is
+    /// begun with a null <see cref="FrameStreamInfo.FrameCount"/>, so a sink that needs the total up
+    /// front cannot be used with it, and a routine that never finishes would run forever if
+    /// <see cref="MaxFrames"/> did not stop it.
+    /// </para>
     /// </remarks>
     /// <exception cref="ArgumentOutOfRangeException">The value is not finite and non-negative.</exception>
     public double? Duration
@@ -86,11 +108,16 @@ public sealed class OfflineOptions
 
     /// <summary>Gets the explicit frame count, or null to derive it from <see cref="Duration"/>.</summary>
     /// <remarks>
+    /// <para>
     /// <strong>Precedence.</strong> When both this and <see cref="Duration"/> are set, this wins and
     /// the duration is ignored. The reference leaves the combination unspecified; Najm resolves it
     /// toward the more precise of the two, because a frame count states the answer a duration only
     /// implies, and silently rejecting the pair would break the common case of overriding a
     /// configured duration with an exact count for a test.
+    /// </para>
+    /// <para>
+    /// Null in both is not a missing length but a third one: see <see cref="RunsUntilIdle"/>.
+    /// </para>
     /// </remarks>
     /// <exception cref="ArgumentOutOfRangeException">The value is negative.</exception>
     public long? Frames
@@ -197,12 +224,60 @@ public sealed class OfflineOptions
         }
     }
 
+    /// <summary>
+    /// Gets whether this configuration runs until the scene's scheduled work finishes, rather than
+    /// for a length stated in advance.
+    /// </summary>
+    /// <remarks>
+    /// True when neither <see cref="Frames"/> nor <see cref="Duration"/> is set. The run ends after
+    /// the first tick that leaves <see cref="Scene.HasScheduledWork"/> false, so a scene that
+    /// schedules nothing is one frame long, and a scene holding a routine that never completes runs
+    /// until <see cref="MaxFrames"/> stops it — with an exception, because ending an open-ended run
+    /// early by quietly returning would be the truncation this mode exists to prevent.
+    /// </remarks>
+    public bool RunsUntilIdle => frames is null && duration is null;
+
+    /// <summary>
+    /// Gets the frame ceiling an open-ended run is stopped at, or null for the default of one hour
+    /// of simulated time.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Only <see cref="RunsUntilIdle"/> runs consult this; a run with a stated length already has
+    /// its bound. Reaching it throws rather than returning the frames rendered so far: a run that
+    /// stopped short and reported success would be indistinguishable from one that finished, which
+    /// is the failure this whole mode is aimed at.
+    /// </para>
+    /// <para>
+    /// The default is deliberately far beyond any plausible clip and far short of filling a disk.
+    /// Set it explicitly for a genuinely longer run, or to <see cref="long.MaxValue"/> to accept an
+    /// unbounded one.
+    /// </para>
+    /// </remarks>
+    /// <exception cref="ArgumentOutOfRangeException">The value is not positive.</exception>
+    public long? MaxFrames
+    {
+        get => maxFrames;
+        init
+        {
+            if (value is { } limit)
+            {
+                ArgumentOutOfRangeException.ThrowIfNegativeOrZero(limit);
+            }
+
+            maxFrames = value;
+        }
+    }
+
     /// <summary>Resolves how many frames this configuration renders.</summary>
     /// <remarks>
     /// <see cref="Frames"/> wins over <see cref="Duration"/>; a duration alone becomes
-    /// <c>ceil(duration × fps)</c> frames.
+    /// <c>ceil(duration × fps)</c> frames. An open-ended configuration has no answer to give here —
+    /// its length is discovered by running it — so it throws rather than inventing one.
     /// </remarks>
-    /// <exception cref="InvalidOperationException">Neither a frame count nor a duration is set.</exception>
+    /// <exception cref="InvalidOperationException">
+    /// The run is open-ended: <see cref="RunsUntilIdle"/> is true.
+    /// </exception>
     /// <exception cref="OverflowException">The duration needs more frames than are representable.</exception>
     public long ResolveFrameCount()
     {
@@ -216,6 +291,16 @@ public sealed class OfflineOptions
         }
 
         throw new InvalidOperationException(
-            "An offline render needs a length: set OfflineOptions.Frames or OfflineOptions.Duration.");
+            "This offline configuration has no frame count: with neither Frames nor Duration set it "
+            + "runs until the scene's scheduled work finishes, and its length is known only after "
+            + "the run. Test OfflineOptions.RunsUntilIdle before asking.");
     }
+
+    /// <summary>Resolves the frame ceiling an open-ended run is stopped at.</summary>
+    /// <remarks>
+    /// <see cref="MaxFrames"/> when set, otherwise one hour of simulated time at <see cref="Fps"/>.
+    /// </remarks>
+    /// <exception cref="OverflowException">The default bound needs more frames than are representable.</exception>
+    public long ResolveFrameLimit() =>
+        maxFrames ?? FixedStepTiming.TicksForStill(DefaultLimitSeconds, framesPerSecond);
 }

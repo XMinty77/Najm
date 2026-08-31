@@ -59,6 +59,16 @@ public static class OfflineRenderer
     /// and produces an empty but properly opened and closed stream.
     /// </para>
     /// <para>
+    /// <strong>With neither set the run is open-ended</strong> — see
+    /// <see cref="OfflineOptions.RunsUntilIdle"/> — and ends after the first tick that leaves
+    /// <see cref="Scene.HasScheduledWork"/> false. The frame that tick produced is submitted like
+    /// any other, so the last frame of the clip is the one the last routine finished on; a scene
+    /// that schedules nothing is one frame long. The sink is begun with a null
+    /// <see cref="FrameStreamInfo.FrameCount"/>, since the length is not known in advance, and a run
+    /// whose work never finishes is stopped at <see cref="OfflineOptions.MaxFrames"/> by an
+    /// exception rather than by a truncated success.
+    /// </para>
+    /// <para>
     /// The scene is unloaded before this method returns, on every path. If the run fails — a faulting
     /// scene, a sink that throws — the original failure propagates and the scene is still unloaded;
     /// a sink that also implements <see cref="IDisposable"/> is disposed so an external encoder does
@@ -81,9 +91,15 @@ public static class OfflineRenderer
         ArgumentNullException.ThrowIfNull(options);
 
         var sink = options.Sink;
-        var frameCount = options.ResolveFrameCount();
+        var openEnded = options.RunsUntilIdle;
+
+        // Both are resolved before the scene is touched, so a configuration error is reported
+        // without a load, a surface, or an opened stream behind it.
+        var frameCount = openEnded ? null : (long?)options.ResolveFrameCount();
+        var frameLimit = openEnded ? options.ResolveFrameLimit() : 0L;
         var framesPerSecond = options.Fps;
 
+        long rendered;
         scene.Load(new SceneEnvironment(
             surfaces,
             typesetter: options.Typesetter,
@@ -102,11 +118,37 @@ public static class OfflineRenderer
                 frameCount));
 
             var clock = new FrameClock(ClockPolicy.Fixed(framesPerSecond));
-            for (var frame = 0L; frame < frameCount; frame++)
+            if (openEnded)
             {
-                scene.Tick(new TickContext(clock.Advance(), InputBlock.Empty));
-                scene.Render(target);
-                Capture(target, sink, frame, size, options.Format);
+                rendered = 0L;
+                while (true)
+                {
+                    RenderOneFrame(scene, target, sink, clock, rendered, size, options.Format);
+                    rendered++;
+                    if (!scene.HasScheduledWork)
+                    {
+                        break;
+                    }
+
+                    if (rendered >= frameLimit)
+                    {
+                        throw new InvalidOperationException(
+                            $"The scene still had scheduled work after {rendered} frames "
+                            + $"({rendered / framesPerSecond:0.###} simulated seconds), the ceiling for "
+                            + "a run with no stated length. Ending here would truncate the clip "
+                            + "silently, which is what this mode exists to prevent: raise "
+                            + "OfflineOptions.MaxFrames if the clip is genuinely longer, or state a "
+                            + "Duration or Frames.");
+                    }
+                }
+            }
+            else
+            {
+                rendered = frameCount!.Value;
+                for (var frame = 0L; frame < rendered; frame++)
+                {
+                    RenderOneFrame(scene, target, sink, clock, frame, size, options.Format);
+                }
             }
 
             sink.End();
@@ -118,7 +160,22 @@ public static class OfflineRenderer
         }
 
         scene.Unload();
-        return frameCount;
+        return rendered;
+    }
+
+    /// <summary>Ticks one frame, renders it, and hands it to the sink.</summary>
+    private static void RenderOneFrame(
+        Scene scene,
+        IRenderTarget target,
+        IFrameSink sink,
+        FrameClock clock,
+        long frame,
+        PixelSize size,
+        PixelFormat format)
+    {
+        scene.Tick(new TickContext(clock.Advance(), InputBlock.Empty));
+        scene.Render(target);
+        Capture(target, sink, frame, size, format);
     }
 
     /// <summary>Renders exactly one frame at a chosen simulated time and submits it.</summary>

@@ -366,6 +366,30 @@ public class Scene
             .Animate(setter, from, to, duration, default, ease, owner: null);
     }
 
+    /// <summary>
+    /// Gets whether this scene still holds a coroutine or a tween that has not reached a terminal
+    /// status.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The question "is the choreography finished?", answered by the only object that knows. It is
+    /// what an open-ended offline run keys off — see <see cref="OfflineOptions.Duration"/> — and it
+    /// is the honest alternative to a scene publishing a hand-summed duration that the waits inside
+    /// it can silently exceed.
+    /// </para>
+    /// <para>
+    /// <strong>Finished is not the same as running.</strong> A paused routine, and one under a
+    /// disabled node, is still live here: it has stopped running, not stopped existing, and
+    /// something may yet resume it. A routine parked on a condition that never comes true is live
+    /// forever, which is a real way to make a run that never ends.
+    /// </para>
+    /// <para>
+    /// Read it after a tick. Inside one — from a routine, or from <c>Update</c> — the answer counts
+    /// the routine doing the asking.
+    /// </para>
+    /// </remarks>
+    public bool HasScheduledWork => scheduler.HasLiveWork;
+
     /// <summary>Runs after the engine has attached the scene's initial layers.</summary>
     protected virtual void OnLoad()
     {

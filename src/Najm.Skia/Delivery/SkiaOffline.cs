@@ -55,8 +55,9 @@ public static class SkiaOffline
     /// <exception cref="ArgumentNullException">An argument is null.</exception>
     /// <exception cref="ArgumentException"><paramref name="backend"/> is not a defined backend.</exception>
     /// <exception cref="InvalidOperationException">
-    /// The factory returned null, the options specify no length, or the GPU backend was asked for and
-    /// no GL context could be brought up.
+    /// The factory returned null, an open-ended run passed
+    /// <see cref="OfflineOptions.MaxFrames"/> with the scene's work unfinished, or the GPU backend
+    /// was asked for and no GL context could be brought up.
     /// </exception>
     /// <exception cref="PlatformNotSupportedException">
     /// <see cref="OfflineBackend.Gpu"/> was asked for on a platform with no headless GL context.

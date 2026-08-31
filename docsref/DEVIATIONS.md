@@ -892,6 +892,59 @@ exactly what the engine will tween, and there are exactly two widths a scene has
 
 ---
 
+## 21. An offline run with no stated length runs until the scene's work finishes
+
+**Docs:** §18 and NAJM-SKIA V.2 give an offline run a length: a duration or a
+frame count, converted to ticks by the fixed-step rule. Nothing in the reference
+contemplates a run whose length is decided by the scene, and Najm's own
+`ResolveFrameCount` treated the absence of both as a configuration error.
+
+**Decision:** neither `Frames` nor `Duration` — `OfflineOptions.RunsUntilIdle` —
+now means "tick until the scene has no unfinished routine or tween, and submit
+that last frame". Three members carry it: `RunsUntilIdle`, a `MaxFrames` ceiling,
+and `Scene.HasScheduledWork`, which is the question the loop asks and is public
+because otherwise the rule the mode runs on is unobservable from outside the
+engine. `ResolveFrameCount()` still throws for this configuration, with a message
+that now says why rather than blaming the caller.
+
+**Why:** the alternative is what the reporting scene actually does — publish its
+own duration by hand, as the sum of its beat constants — and that sum is **wrong**,
+in the direction that loses picture. Waits add whole frames the constants cannot
+see: a spin on a condition, and one per `Wait.For` rejoin (deviation 19). The
+scene that reported it drifts about ten frames past its stated duration, the
+exporter cuts at the stated duration, and nothing anywhere says so. It survives
+only because that clip's last beat is a half-second tail with nothing in it. The
+scheduler knows when the routines are done; nothing else in the system does, and
+no arithmetic an author can write recovers it.
+
+**What counts as unfinished.** Every routine and every tween that has not reached
+a terminal status — not only coroutines, though "until the coroutines finish" is
+how the request was phrased. A scene whose last motion is a tween is not finished
+while that tween is still writing values, and a run that stopped at the last
+routine would cut it. Paused work, and work under a disabled node, is unfinished
+too: it has stopped running, not stopped existing.
+
+**The two costs, both deliberate.** The length is discovered rather than declared,
+so the sink is begun with a null `FrameStreamInfo.FrameCount` — already a legal
+value, meaning "a live capture that runs until the user stops it", and the one
+sink that cares (`PngFile`) already accepts it. And a routine that never completes
+would run forever, so `MaxFrames` bounds it, defaulting to one hour of simulated
+time at the run's rate. **Reaching the ceiling throws.** Returning the frames
+rendered so far would be a truncated clip reported as a finished one, which is
+precisely the failure this mode exists to remove; a run that cannot answer the
+question must say so rather than answer it wrongly.
+
+**What this changes for existing callers.** One behaviour: a configuration with no
+length used to throw before the scene was touched, and now runs. That was a
+fail-loud on an omission, and it is being spent on a feature — the trade is
+deliberate, and the ceiling is what keeps the omission from being unbounded. A
+zero-length run is still expressible and still means zero: `Frames = 0` is a
+stated length, not an absent one.
+
+**Status:** Implemented.
+
+---
+
 ## Documentation conflicts
 
 Places where the reference set disagrees with itself. Recorded so the

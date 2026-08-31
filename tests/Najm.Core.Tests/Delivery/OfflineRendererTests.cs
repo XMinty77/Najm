@@ -157,16 +157,28 @@ public sealed class OfflineRendererTests
     }
 
     [TestMethod]
-    public void ALengthlessConfigurationFailsBeforeTheSceneIsTouched()
+    public void ALengthlessConfigurationIsTheOpenEndedOne()
     {
+        // This used to be the fail-loud case, and is now the third length: neither Frames nor
+        // Duration means "as long as the scene's own choreography takes". A TimelineScene schedules
+        // nothing, so it is one frame. OpenEndedOfflineTests covers what the mode buys and where it
+        // stops.
         var scene = new TimelineScene();
         using var surfaces = new StubSurfaceProvider();
+        var sink = new RecordingFrameSink();
+        var options = new OfflineOptions { Sink = sink };
 
-        Assert.ThrowsExactly<InvalidOperationException>(() =>
-            OfflineRenderer.Render(scene, surfaces, new OfflineOptions { Sink = new RecordingFrameSink() }));
+        Assert.IsTrue(options.RunsUntilIdle);
+        Assert.ThrowsExactly<InvalidOperationException>(
+            () => options.ResolveFrameCount(),
+            "an open-ended run has no length to state in advance");
 
-        Assert.AreEqual(SceneState.Constructed, scene.State);
-        Assert.AreEqual(0, scene.LoadCount);
+        var frames = OfflineRenderer.Render(scene, surfaces, options);
+
+        Assert.AreEqual(1L, frames);
+        Assert.HasCount(1, sink.Frames);
+        Assert.IsNull(sink.Info.FrameCount, "and the sink is told the length is unknown");
+        Assert.AreEqual(SceneState.Unloaded, scene.State);
     }
 
     [TestMethod]

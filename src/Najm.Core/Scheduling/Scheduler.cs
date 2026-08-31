@@ -34,6 +34,36 @@ internal sealed class Scheduler
     /// <summary>Gets the number of animations the scheduler is holding, terminal ones included.</summary>
     internal int AnimationCount => animations.Count;
 
+    /// <summary>Gets whether any routine or tween has not yet reached a terminal status.</summary>
+    /// <remarks>
+    /// Scanned rather than read off the counts, because a terminal entry stays in its queue until
+    /// the compaction at the end of the pass that ended it, and because a caller asking this
+    /// question wants the live answer, not the queue's length. Paused work and work under a
+    /// disabled owner is still live: it has not finished, it has only stopped running.
+    /// </remarks>
+    internal bool HasLiveWork
+    {
+        get
+        {
+            for (var index = 0; index < routines.Count; index++)
+            {
+                if (routines[index].Status == RoutineStatus.Running)
+                {
+                    return true;
+                }
+            }
+            for (var index = 0; index < animations.Count; index++)
+            {
+                if (animations[index].Status == RoutineStatus.Running)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+    }
+
     /// <summary>
     /// Returns whether a routine or tween owned by <paramref name="owner"/> may run: every node from
     /// the owner up to its root must be enabled.

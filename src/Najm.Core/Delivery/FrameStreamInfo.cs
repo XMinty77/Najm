@@ -15,8 +15,9 @@ public readonly record struct FrameStreamInfo
     /// <param name="format">The byte and alpha layout every submitted lease carries.</param>
     /// <param name="frameCount">
     /// The total number of frames the producer intends to submit, or null when the length is not
-    /// known in advance — a live capture that runs until the user stops it, for instance. An offline
-    /// render always knows it.
+    /// known in advance — a live capture that runs until the user stops it, or an offline run whose
+    /// length is the scene's own choreography (<see cref="OfflineOptions.RunsUntilIdle"/>). An
+    /// offline run with a stated length always knows it.
     /// </param>
     /// <exception cref="ArgumentOutOfRangeException">
     /// A dimension is not positive, <paramref name="framesPerSecond"/> is not finite and positive,
