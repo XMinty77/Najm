@@ -841,6 +841,57 @@ pass begins, and says so.
 
 ---
 
+## 20. `Animate` has a `double` overload
+
+**Docs:** §10.6's one example is
+`Animate(v => circle.Radius = v, from: 0, to: 40, duration: 0.6, ease: Ease.OutCubic)`,
+which never states the width of `v`, `from` or `to`; the property it drives is a
+float, like every coordinate in the drawing model, and Najm implemented the member
+float-only. The reference does not contemplate a second width, nor forbid one.
+
+**Decision:** add `Action<double>` overloads of `Scene.Animate` and `Node.Animate`,
+both easing flavours, beside the float ones. Internally `Animation` becomes an
+abstract base holding the timing — elapsed, the reached-the-end rule, status,
+eligibility — with `FloatAnimation` and `DoubleAnimation` holding the endpoints and
+the setter. The float path's arithmetic is unchanged, expression for expression.
+
+**Why:** the *drawing* model is float and should stay float, but the quantities a
+scene animates are frequently not. The scene that reported this drives a camera
+azimuth in degrees, a grade parameter, and a radius in Bohr radii, all doubles
+because that is what the physics they come out of holds them in. Every tween of one
+was a lambda that widens, a `with` expression to write back through, and `f`
+suffixes on numbers that are not floats — three of them in an eleven-line routine.
+The endpoints were rounded to float before the tween ran, so a ramp to a stated
+`155` landed on the double nearest the float nearest 155.
+
+**What is not double.** The easing curve. `ITimingFunction.Evaluate` is a float
+contract in `Najm.Utils` and widening it would touch every curve, every property
+helper, and the reference's own `Ease` surface for a resolution nobody has asked
+for. So a double tween interpolates in double, between exact double endpoints, with
+a single-precision curve: about seven digits of the interval, anchored at endpoints
+that are exact, and a final write that is the to-value itself. This is stated on the
+member rather than left to be discovered.
+
+**The sharp edge, and why it is documented rather than designed away.** Which
+overload a call site reaches is decided by the endpoint arguments, and an int
+literal converts to float in preference to double — so `Animate(v => azimuth = v,
+0, 90, 1d)` over a `double azimuth` compiles, silently runs the *float* tween, and
+differs only in the last digits. Nothing can be done about that from inside the
+language's rules; both members therefore say so, and a test pins it by reading the
+boxed type of the setter's parameter. It is also why the reference's own example,
+transcribed verbatim, still reaches the float overload.
+
+**What was deliberately not added.** No generic `Animate<T> where T : INumber<T>`.
+It would subsume both overloads and infer cleanly from the endpoints, but it admits
+`int` and `decimal` — an int tween would round every intermediate value and look
+like a stutter rather than an error — and it turns one small pair of members into a
+generic-math surface with an instantiation per element type. Two overloads state
+exactly what the engine will tween, and there are exactly two widths a scene has.
+
+**Status:** Implemented.
+
+---
+
 ## Documentation conflicts
 
 Places where the reference set disagrees with itself. Recorded so the

@@ -174,6 +174,55 @@ public abstract class Node
             .Animate(setter, from, to, duration, default, ease, owner: this);
     }
 
+    /// <summary>Starts a node-lifetime tween over a double property and returns its handle.</summary>
+    /// <param name="setter">Receives the from-value now and every value the ramp produces after.</param>
+    /// <param name="from">The value written synchronously, at this call site.</param>
+    /// <param name="to">The exact value written when the tween completes.</param>
+    /// <param name="duration">Finite, non-negative simulation seconds the ramp takes.</param>
+    /// <param name="ease">The easing curve. The default is <see cref="Ease.Linear"/>.</param>
+    /// <remarks>
+    /// The double counterpart of the <see cref="float"/> overload, with identical lifetime and
+    /// timing: it exists so a scene can tween the quantities it actually holds — degrees, radii,
+    /// anything read out of a physical model — without a widening lambda and <c>f</c>-suffixed
+    /// literals at the call site. Which of the two a call reaches is decided by the endpoints, and
+    /// an int literal picks the float one; see
+    /// <see cref="Scene.Animate(Action{double}, double, double, double, TimingFunction)"/> for that
+    /// rule and for what is and is not double about the arithmetic.
+    /// </remarks>
+    /// <exception cref="ArgumentNullException"><paramref name="setter"/> is null.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// An endpoint is not finite, or the duration is not finite and non-negative.
+    /// </exception>
+    /// <exception cref="InvalidOperationException">
+    /// This node is not attached to a scene that can schedule.
+    /// </exception>
+    public AnimationHandle Animate(
+        Action<double> setter,
+        double from,
+        double to,
+        double duration,
+        TimingFunction ease = default) =>
+        RequireScheduler(nameof(Animate)).Animate(setter, from, to, duration, ease, custom: null, owner: this);
+
+    /// <inheritdoc cref="Animate(Action{double}, double, double, double, TimingFunction)" />
+    /// <param name="setter">Receives the from-value now and every value the ramp produces after.</param>
+    /// <param name="from">The value written synchronously, at this call site.</param>
+    /// <param name="to">The exact value written when the tween completes.</param>
+    /// <param name="duration">Finite, non-negative simulation seconds the ramp takes.</param>
+    /// <param name="ease">A custom easing curve.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="setter"/> or <paramref name="ease"/> is null.</exception>
+    public AnimationHandle Animate(
+        Action<double> setter,
+        double from,
+        double to,
+        double duration,
+        ITimingFunction ease)
+    {
+        ArgumentNullException.ThrowIfNull(ease);
+        return RequireScheduler(nameof(Animate))
+            .Animate(setter, from, to, duration, default, ease, owner: this);
+    }
+
     internal int ChildCount => children?.Count ?? 0;
 
     internal int BehaviorCount => behaviors?.Count ?? 0;

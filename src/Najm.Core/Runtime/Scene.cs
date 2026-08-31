@@ -303,6 +303,69 @@ public class Scene
             .Animate(setter, from, to, duration, default, ease, owner: null);
     }
 
+    /// <summary>Starts a scene-lifetime tween over a double property and returns its handle.</summary>
+    /// <param name="setter">Receives the from-value now and every value the ramp produces after.</param>
+    /// <param name="from">The value written synchronously, at this call site.</param>
+    /// <param name="to">The exact value written when the tween completes.</param>
+    /// <param name="duration">Finite, non-negative simulation seconds the ramp takes.</param>
+    /// <param name="ease">The easing curve. The default is <see cref="Ease.Linear"/>.</param>
+    /// <remarks>
+    /// <para>
+    /// The same tween as the <see cref="float"/> overload in every timing respect — same pass, same
+    /// from-value applied at the call site, same exact landing on <paramref name="to"/>. It exists
+    /// because the quantities a scene actually animates are doubles: degrees, radii, seconds, and
+    /// anything read out of a physical model. Driving one of those through the float overload costs
+    /// a widening lambda, <c>f</c>-suffixed literals on numbers that are not floats, and endpoints
+    /// rounded to float before the tween has run at all.
+    /// </para>
+    /// <para>
+    /// <strong>Which overload a call site gets is decided by the endpoints.</strong> <c>0d</c> and
+    /// <c>1.5</c> reach this one; <c>0</c>, <c>1</c> and <c>0f</c> reach the float one, because an
+    /// int literal converts to float in preference to double. That is worth knowing rather than
+    /// worth fighting, because a float setter widens into a double field silently:
+    /// <c>Animate(v =&gt; azimuth = v, 0, 90, 1d)</c> over a <c>double azimuth</c> compiles, runs the
+    /// float tween, and differs only in the last digits. Suffix the endpoints — <c>0d</c>,
+    /// <c>90d</c> — or pass double variables, and the intended overload is unambiguous.
+    /// </para>
+    /// <para>
+    /// <strong>Precision.</strong> The endpoints and the interpolation are double; the easing curve
+    /// is evaluated in single precision, because <see cref="ITimingFunction"/> is a float contract.
+    /// The curve therefore resolves about seven digits of the interval, around endpoints that are
+    /// exact and a final write that is <paramref name="to"/> itself.
+    /// </para>
+    /// </remarks>
+    /// <exception cref="ArgumentNullException"><paramref name="setter"/> is null.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// An endpoint is not finite, or the duration is not finite and non-negative.
+    /// </exception>
+    /// <exception cref="InvalidOperationException">The scene is not in a schedulable state.</exception>
+    public AnimationHandle Animate(
+        Action<double> setter,
+        double from,
+        double to,
+        double duration,
+        TimingFunction ease = default) =>
+        RequireScheduler(nameof(Animate)).Animate(setter, from, to, duration, ease, custom: null, owner: null);
+
+    /// <inheritdoc cref="Animate(Action{double}, double, double, double, TimingFunction)" />
+    /// <param name="setter">Receives the from-value now and every value the ramp produces after.</param>
+    /// <param name="from">The value written synchronously, at this call site.</param>
+    /// <param name="to">The exact value written when the tween completes.</param>
+    /// <param name="duration">Finite, non-negative simulation seconds the ramp takes.</param>
+    /// <param name="ease">A custom easing curve.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="setter"/> or <paramref name="ease"/> is null.</exception>
+    public AnimationHandle Animate(
+        Action<double> setter,
+        double from,
+        double to,
+        double duration,
+        ITimingFunction ease)
+    {
+        ArgumentNullException.ThrowIfNull(ease);
+        return RequireScheduler(nameof(Animate))
+            .Animate(setter, from, to, duration, default, ease, owner: null);
+    }
+
     /// <summary>Runs after the engine has attached the scene's initial layers.</summary>
     protected virtual void OnLoad()
     {

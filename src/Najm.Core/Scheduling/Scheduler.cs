@@ -93,6 +93,37 @@ internal sealed class Scheduler
         {
             throw new ArgumentOutOfRangeException(nameof(to), to, "A tween's to-value must be finite.");
         }
+
+        ValidateDuration(duration);
+        return Queue(new FloatAnimation(setter, from, to, duration, builtIn, custom, owner));
+    }
+
+    /// <inheritdoc cref="Animate(Action{float}, float, float, double, TimingFunction, ITimingFunction, Node)" />
+    internal AnimationHandle Animate(
+        Action<double> setter,
+        double from,
+        double to,
+        double duration,
+        TimingFunction builtIn,
+        ITimingFunction? custom,
+        Node? owner)
+    {
+        ArgumentNullException.ThrowIfNull(setter);
+        if (!double.IsFinite(from))
+        {
+            throw new ArgumentOutOfRangeException(nameof(from), from, "A tween's from-value must be finite.");
+        }
+        if (!double.IsFinite(to))
+        {
+            throw new ArgumentOutOfRangeException(nameof(to), to, "A tween's to-value must be finite.");
+        }
+
+        ValidateDuration(duration);
+        return Queue(new DoubleAnimation(setter, from, to, duration, builtIn, custom, owner));
+    }
+
+    private static void ValidateDuration(double duration)
+    {
         if (!double.IsFinite(duration) || duration < 0d)
         {
             throw new ArgumentOutOfRangeException(
@@ -100,9 +131,16 @@ internal sealed class Scheduler
                 duration,
                 "A tween duration must be finite and non-negative.");
         }
+    }
 
+    /// <summary>Applies the from-value at the call site, then enqueues the tween.</summary>
+    /// <remarks>
+    /// The order matters and is the contract: the property never shows a frame of its old value, and
+    /// a from-value write that throws leaves nothing queued behind it.
+    /// </remarks>
+    private AnimationHandle Queue(Animation record)
+    {
         AssertStartablePhase();
-        var record = new Animation(setter, from, to, duration, builtIn, custom, owner);
         record.ApplyFromValue();
         animations.Add(record);
         return new AnimationHandle(record);
