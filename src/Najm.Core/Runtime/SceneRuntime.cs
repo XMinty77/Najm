@@ -178,6 +178,26 @@ internal sealed class SceneRuntime : INodeMutationSink
             throw new InvalidOperationException("Scene Update is not reentrant.");
         }
 
+        // INPUT (§4.7): the router dispatches this tick's events, then the phase ends with its own
+        // flush — which is what makes an Input-added node update, lay out, and render this frame
+        // (§6.4). A deterministic tick carries the empty block and the router returns immediately.
+        isUpdating = true;
+        try
+        {
+            scene.Input.Route(tick);
+        }
+        catch
+        {
+            ClearMutationState();
+            throw;
+        }
+        finally
+        {
+            isUpdating = false;
+        }
+
+        FlushMutations();
+
         isUpdating = true;
         try
         {
@@ -669,6 +689,10 @@ internal sealed class SceneRuntime : INodeMutationSink
         // stop at their current value. Parent links are still intact at this point, which is what
         // lets ownership be decided by walking ancestors.
         scheduler.CancelOwnedBySubtree(root, failures);
+
+        // §6.4 and §6.6: detach releases input capture, and §9.2 adds keyboard focus. Both are
+        // dropped silently — the subtree's OnDetach has already run above.
+        scene.Input.ReleaseSubtree(root);
 
         try
         {

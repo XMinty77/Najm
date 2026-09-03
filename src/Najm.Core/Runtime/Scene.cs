@@ -17,6 +17,7 @@ public class Scene
 
     private readonly SceneRuntime runtime;
     private readonly Scheduler scheduler;
+    private readonly InputRouter router;
     private readonly Vector2 virtualResolution = DefaultVirtualResolution;
     private SceneEnvironment? environment;
     private List<IDisposable>? owned;
@@ -34,11 +35,28 @@ public class Scene
     {
         Layers = new LayerStack(this);
         scheduler = new Scheduler(this);
+        router = new InputRouter(this);
         runtime = new SceneRuntime(this, Layers, scheduler);
     }
 
     /// <summary>Gets this scene's controlled, add-ordered layer stack.</summary>
     public LayerStack Layers { get; }
+
+    /// <summary>Gets this scene's input router: capture, focus, and picking (§9.2).</summary>
+    /// <remarks>
+    /// <para>
+    /// The router runs itself during the Input phase of every tick; this property is the handle for
+    /// the things that are asked <em>between</em> events — <see cref="InputRouter.Capture"/> from a
+    /// press, <see cref="InputRouter.Focus"/> from a click on a text field,
+    /// <see cref="InputRouter.Pick"/> from a tool that wants to know what is under a point.
+    /// </para>
+    /// <para>
+    /// One router per scene instance, for the whole of its life. Capture and focus are therefore
+    /// scene state, and a replay that constructs a fresh instance (§2.2) starts with neither — which
+    /// is what keeps them out of the determinism story.
+    /// </para>
+    /// </remarks>
+    public InputRouter Input => router;
 
     /// <summary>Gets the closed capability set this scene was loaded with.</summary>
     /// <remarks>
@@ -96,6 +114,17 @@ public class Scene
         if (!tick.IsValid)
         {
             throw new ArgumentException("A scene tick requires constructed TickContext.", nameof(tick));
+        }
+        if (tick.Time.IsFixedStep && !tick.Input.IsEmpty)
+        {
+            // §2.1, §2.5, §9.1 and Appendix A.1 all state the same rule: a deterministic run takes
+            // no input. It is enforced here rather than trusted, because the failure it prevents —
+            // a fixed-step export that quietly depends on where a pointer happened to be — does not
+            // show up as a crash, only as two renders of the same scene that do not match.
+            throw new InvalidOperationException(
+                "A fixed-step tick must carry InputBlock.Empty: deterministic runs take no input " +
+                "(ARCHITECTURE section 2.1). Interactive behaviour belongs to a live variant of " +
+                "the scene (section 2.5), and a live run uses ClockPolicy.Live.");
         }
         if (state is not (SceneState.Loaded or SceneState.Started))
         {

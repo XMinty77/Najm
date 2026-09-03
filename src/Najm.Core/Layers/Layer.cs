@@ -281,7 +281,15 @@ public abstract class Layer
     /// and threaded through rather than rebuilt per node.
     /// </remarks>
     internal static ResolvedNodeFrame Resolve(Node2D node, in Matrix3x2 virtualBase) =>
-        new(node.WorldMatrix * virtualBase, node.HitBounds, node.VisualBounds);
+        ResolveComposed(node, node.WorldMatrix * virtualBase);
+
+    /// <summary>Builds a frame from a local→virtual matrix the caller has already composed.</summary>
+    /// <remarks>
+    /// The hit walk composes that matrix on its way down the tree anyway — it needs it to test a
+    /// clip — so re-multiplying the world matrix here would do the work twice per node.
+    /// </remarks>
+    internal static ResolvedNodeFrame ResolveComposed(Node2D node, in Matrix3x2 localToVirtual) =>
+        new(localToVirtual, node.HitBounds, node.VisualBounds);
 
     internal LayerStack? OwnerStack => ownerStack;
 

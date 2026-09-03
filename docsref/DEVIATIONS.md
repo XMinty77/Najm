@@ -1231,6 +1231,135 @@ with a slider that stops working at the bottom of a fade.
 
 ---
 
+## 28. `IInteractive`'s signatures, and the two additions to `PointerArgs`
+
+**Docs:** §9.3 lists the members — "`OnPointerEnter/Exit/Down/Up/Move`, `OnDrag`,
+`OnScroll`, `OnFocus/Blur`, `OnKey`/`OnTextInput` (when focused), plus
+`HitTest`/bounds from the drawable contract" — and declares `PointerArgs` in full
+with `Virtual`, `Local`, `PointerId`, `Button`, and "+ modifiers, scroll delta
+where applicable". It gives no return types, no parameter types for the keyboard
+members, and no statement of which members an implementer must supply.
+
+**Decisions:**
+
+- **Every member has a default implementation**, so implementing the interface
+  costs exactly the members a node wants. §9.3 calls this "opt-in"; requiring
+  eleven members on every draggable point would make it the opposite. Defaults
+  are `false` and empty, so a partial implementation never silently swallows
+  input it did not handle.
+- **Consuming members return `bool`; notifications return `void`.** §9.1 tracks
+  consumption alongside events, and something has to say a node took one.
+  `PointerArgs` is a `readonly struct` in the reference's own declaration, so a
+  settable `Handled` is not available; a return value is what is left. Enter,
+  exit, focus, and blur return nothing because they report a state change rather
+  than deliver an event there is anything to consume.
+- **`KeyArgs` covers press and release in one type**, with `IsDown` saying which,
+  because §9.3 gives a single `OnKey` and splitting it would push the
+  down/up pairing into every handler.
+- **`PointerArgs` gains `Buttons`, `VirtualDelta`, and `LocalDelta`.** `Buttons`
+  is the held set alongside the reference's singular `Button`. The deltas are
+  what §9.3's own promise needs: it says `DraggableBehavior` provides "drag
+  deltas in local/world/virtual" with correct grab-offset handling, and the only
+  place that can be computed correctly is at dispatch, where the resolved
+  mapping is in hand. `LocalDelta` is the difference of two *mapped points*, not
+  a mapped difference, which is what makes it right under a translating camera
+  as well as a scaling one — the naive version drifts and the drift is invisible
+  until someone pans while dragging.
+
+**Status:** Implemented.
+
+---
+
+## 29. `InputRouter` — the type §9.2 describes and does not name
+
+**Docs:** §9.2 specifies the router's behaviour in a paragraph and a code
+sketch, and §16 lists "input model + **the hit walk (§9.2)** + router +
+`IInteractive`/`PointerArgs`" among Core's contents. No type name, no member
+list, and no statement of how a node or a behavior reaches the router in order
+to capture a pointer or take focus.
+
+**Decision:** `public sealed class InputRouter`, one per `Scene` for the scene's
+whole life, reached through a new `public InputRouter Input { get; }` on
+`Scene`. Its surface is `Focused`, `Focus(node)`, `Capture(node, pointerId)`,
+`ReleaseCapture(pointerId)`, `CaptureHolder(pointerId)`,
+`HoverTarget(pointerId)`, `Pick(pointerVirtual)`, and the static
+`ParticipatesInInput(layer)`. `Route` is internal: §4.7 makes the Input phase the
+engine's, and nothing outside Core should be able to dispatch a frame's input
+twice.
+
+`Scene.Input` is an addition to §4.1's declaration of `Scene`, which lists no
+such member. Capture and focus are scene state and there is nowhere else for
+them to live; putting them on the router keeps §4.1's other promise — that
+`Scene` is a lifecycle and a layer stack, not a service registry.
+
+**Six behaviours §9.2 leaves open, and what was chosen:**
+
+1. **Only `IInteractive` nodes are candidates.** A node that implements nothing
+   is transparent to the walk rather than blocking what is beneath it — it is
+   never even hit-tested. This is what makes §9.3's "opt-in" mean something: a
+   decorative label over a button does not eat the click. The cost is that
+   blocking input requires an explicit interactive node that returns true, which
+   is the more discoverable of the two mistakes.
+2. **No bubbling.** The first node that accepts ends the walk; an unhandled
+   event is not offered to its ancestors. §9.2's sketch `return node` describes
+   exactly this, and consumption is already the mechanism for "somebody dealt
+   with it".
+3. **A move is a drag or a move, never both.** With capture *and* a held button
+   it dispatches to `OnDrag`; otherwise to `OnPointerMove`. §9.3 lists both and
+   does not distinguish them.
+4. **Hover follows the captured node.** While a capture is live the hovered node
+   is the captor, so a drag that wanders off does not report an exit half way
+   through. Hover is recomputed on every pointer event, not only on moves.
+5. **A press does not take focus.** Click-to-focus is a component's policy — a
+   `TextBox` calls `Focus(this)` from its own `OnPointerDown` — not the engine's,
+   because the engine has no way to know which nodes want keys.
+6. **Detach releases capture, focus, and hover silently.** §6.4 and §6.6 require
+   the release; nothing says whether `OnBlur`/`OnPointerExit` fire. They do not:
+   the subtree's `OnDetach` has already run by that point, and a callback about a
+   state nobody can act on is worse than none.
+
+**Ordering is tested as ordering.** The walk's full visitation sequence is
+asserted, not just its outcome, so reversing sibling order, visiting parents
+before children, or walking layers bottom-to-top each fail. All three mutations
+were run and each was caught.
+
+**Status:** Implemented.
+
+---
+
+## 30. The determinism rule is enforced, not trusted
+
+**Docs:** §2.1's mode table says a deterministic run takes "**none — empty
+`InputBlock` by contract**"; §2.5 item 5, §9.1's last bullet, and Appendix A.1
+item 6 say it again. Nothing in the reference says the engine *checks*.
+
+**Decision:** `Scene.Tick` throws `InvalidOperationException` when
+`tick.Time.IsFixedStep` is true and `tick.Input.IsEmpty` is false, naming the
+section and pointing at `ClockPolicy.Live`.
+
+**Why enforce rather than document:** the failure this prevents is silent. A
+fixed-step export that consulted input would not crash; it would produce a clip
+that depended on where a pointer happened to be, and the only symptom would be
+two renders of the same scene that do not match — discovered, if at all, weeks
+later. Everything the rule protects (golden tests, replay, presentation
+stepping, §2.2's byte-identical hashes) is downstream of it, so the cheap check
+belongs at the one place every deterministic frame passes through.
+
+**Scope of the check:** the whole block, including snapshots. A fixed-step tick
+carrying no events but a live pointer position is refused too, because a scene
+polling `PointerPosition` in a fixed-step run is exactly as unreproducible as one
+polling clicks. `InputBuffer.ResetState()` is the honest way for a host to make
+its buffer deterministic-safe.
+
+**This does not constrain a live host** in any way it was not already
+constrained: `ClockPolicy.Live` produces `IsFixedStep = false`, and every
+existing deterministic driver (`OfflineRenderer`) already passes
+`InputBlock.Empty`.
+
+**Status:** Implemented.
+
+---
+
 ## Documentation conflicts
 
 Places where the reference set disagrees with itself. Recorded so the
