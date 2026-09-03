@@ -526,31 +526,6 @@ public class Scene
     {
     }
 
-    internal SceneState State => state;
-
-    internal bool IsRendering => isRendering;
-
-    internal void InvokeUpdate(in TickContext tick) => Update(tick);
-
-    /// <summary>Returns the scheduler, refusing the call from a state that cannot schedule.</summary>
-    internal Scheduler RequireScheduler(string operation)
-    {
-        if (state is not (
-            SceneState.Loading or
-            SceneState.Loaded or
-            SceneState.Starting or
-            SceneState.Started))
-        {
-            throw InvalidTransition(operation, state);
-        }
-
-        return scheduler;
-    }
-
-    internal NodeRegistry Registry => runtime.Registry;
-
-    internal ICompositor? Compositor => compositor;
-
     /// <summary>
     /// Loads the scene, binding the environment and acquiring its compositor before author load
     /// code runs.
@@ -561,9 +536,34 @@ public class Scene
     /// <see cref="Render(IRenderTarget)"/> delegates to is acquired from it here and disposed at
     /// <see cref="Unload"/>.
     /// </param>
+    /// <remarks>
+    /// <para>
+    /// <strong>This is a driver's call, not an author's.</strong> §4.6 makes a host the composition
+    /// root — it "assembles the environment, owns the clock and platform event pump, feeds ticks,
+    /// provides render targets, and delivers output" — and §16 puts hosts in their own assemblies,
+    /// outside Core. §4.7 then writes the desktop host's loop with <c>scene.Load(env)</c> in it. A
+    /// driver outside this assembly therefore has to be able to say this, and the whole sequence is
+    /// public for that reason: <see cref="Load"/>, then <see cref="Tick"/> and
+    /// <see cref="Render(IRenderTarget)"/>, then <see cref="Stop"/> and <see cref="Unload"/>.
+    /// </para>
+    /// <para>
+    /// <strong>Being callable is not being callable in the wrong order.</strong> §4.1's promise —
+    /// "a host, embedder, or test cannot call hooks out of order" — is kept by the state machine
+    /// rather than by visibility: this refuses anything but a freshly constructed scene,
+    /// <see cref="Tick"/> refuses a scene that is not loaded and a frame index that does not
+    /// advance, <see cref="Stop"/> and <see cref="Unload"/> run at most once each and in that
+    /// order whichever is called, and the protected hooks stay protected. What is public is the
+    /// command; the transition is still the engine's.
+    /// </para>
+    /// <para>
+    /// A failed load leaves the scene faulted and unusable, and releases whatever <c>OnLoad</c> had
+    /// already acquired — including anything registered with <c>Own</c> — because that path is the
+    /// one where <c>OnUnload</c> never runs.
+    /// </para>
+    /// </remarks>
     /// <exception cref="ArgumentNullException"><paramref name="env"/> is null.</exception>
     /// <exception cref="InvalidOperationException">The scene has already left its constructed state.</exception>
-    internal void Load(SceneEnvironment env)
+    public void Load(SceneEnvironment env)
     {
         ArgumentNullException.ThrowIfNull(env);
         if (state != SceneState.Constructed)
@@ -601,7 +601,21 @@ public class Scene
         }
     }
 
-    internal void Stop()
+    /// <summary>Ends the scene's run: <c>OnStop</c>, then every scene-owned routine and tween.</summary>
+    /// <remarks>
+    /// <para>
+    /// Idempotent and safe from any state but <c>Constructed</c>, so a driver's teardown path can
+    /// call it without first working out whether the run got that far.
+    /// <see cref="Unload"/> calls it for you if you have not.
+    /// </para>
+    /// <para>
+    /// Scheduling ends here <em>even when the author's stop hook throws</em>: an enumerator that
+    /// never gets disposed is a <c>finally</c> that never runs. A hook failure is reported after
+    /// that cleanup, not instead of it.
+    /// </para>
+    /// </remarks>
+    /// <exception cref="InvalidOperationException">The scene has not been loaded.</exception>
+    public void Stop()
     {
         if (state is SceneState.Stopped or SceneState.Unloaded || stopAttempted)
         {
@@ -638,7 +652,23 @@ public class Scene
         ThrowFailures(failures);
     }
 
-    internal void Unload()
+    /// <summary>Releases everything the scene holds: hooks, layers, owned resources, compositor.</summary>
+    /// <remarks>
+    /// <para>
+    /// The last call of a scene's life and the one a driver must make on every path, including a
+    /// failed one. It runs <see cref="Stop"/> first if the run was started and not yet stopped,
+    /// then <c>OnUnload</c>, then detaches every layer, then disposes what <c>Own</c> registered,
+    /// and releases the compositor last — after the author teardown that may still be using it, and
+    /// before the backend that supplied it can be torn down.
+    /// </para>
+    /// <para>
+    /// Idempotent, and it completes even when a hook throws: failures from every stage are gathered
+    /// and reported together rather than letting the first one abandon the rest. That is what makes
+    /// it safe in a <c>finally</c>.
+    /// </para>
+    /// </remarks>
+    /// <exception cref="InvalidOperationException">The scene has not been loaded.</exception>
+    public void Unload()
     {
         if (state == SceneState.Unloaded || unloadAttempted)
         {
@@ -697,6 +727,31 @@ public class Scene
 
         ThrowFailures(failures);
     }
+
+    internal SceneState State => state;
+
+    internal bool IsRendering => isRendering;
+
+    internal void InvokeUpdate(in TickContext tick) => Update(tick);
+
+    /// <summary>Returns the scheduler, refusing the call from a state that cannot schedule.</summary>
+    internal Scheduler RequireScheduler(string operation)
+    {
+        if (state is not (
+            SceneState.Loading or
+            SceneState.Loaded or
+            SceneState.Starting or
+            SceneState.Started))
+        {
+            throw InvalidTransition(operation, state);
+        }
+
+        return scheduler;
+    }
+
+    internal NodeRegistry Registry => runtime.Registry;
+
+    internal ICompositor? Compositor => compositor;
 
     internal void MarkFaulted() => state = SceneState.Faulted;
 

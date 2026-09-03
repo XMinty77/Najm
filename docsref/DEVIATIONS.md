@@ -1360,6 +1360,73 @@ existing deterministic driver (`OfflineRenderer`) already passes
 
 ---
 
+## 31. `Scene.Load`/`Stop`/`Unload` are public, because §4.6's host is outside Core
+
+**Docs:** §4.1 declares them `internal`:
+
+```csharp
+internal void Load(SceneEnvironment env);
+internal void StartFrame();
+internal void Stop();
+internal void Unload();
+```
+
+with the reason stated in the line above: "Lifecycle transitions are
+engine-controlled commands; author code overrides protected hooks. A host,
+embedder, or test cannot call hooks out of order."
+
+**The same document contradicts that three times.** §4.6 makes a host "the
+composition root" that "assembles the environment, owns the clock and platform
+event pump, feeds ticks, provides render targets, and delivers output"; §4.7
+writes the desktop host's loop with `scene.Load(env)` and `scene.Stop;
+scene.Unload` in it; and §16 puts `Najm.Host.Desktop` in its own project
+depending on Core. A host outside the assembly cannot call an internal method,
+so as written no host could start a scene at all. Today the only driver that can
+is `OfflineRenderer`, which lives inside Core.
+
+**Decision:** make all three `public`. `StartFrame` does not exist as a separate
+member — starting is inlined into the first `Tick` — so nothing there changes.
+
+**Why this rather than a `LiveRunner` in Core.** A public live driver beside
+`OfflineRenderer` would also work, and it was the shape the host feasibility
+spike recommended. Against it:
+
+- §16 enumerates Core's contents and names `OfflineRenderer` and
+  `VectorExporter` explicitly. There is no live driver in that list, and §4.6
+  names three drivers of which the live one is `DesktopHost` — in the host
+  assembly, not Core. Adding one would invent surface where the reference
+  already assigned the responsibility elsewhere.
+- It would not remove the need for this decision so much as move it. A live
+  runner has to hand the host a per-frame render target, a swap point, a
+  pre-swap capture point, an overlay point, a resize point, and a restart point.
+  That is the host's loop turned inside out, and §4.6 gives all six of those to
+  the host on purpose.
+- The half that is genuinely delicate — load-then-first-tick ordering, teardown
+  that completes through a throwing hook, release order at unload — is already
+  inside these three methods. A driver does not get it right by being in Core;
+  it gets it right by calling them.
+
+**Why widening loses nothing §4.1 was protecting.** The stated fear is
+out-of-order calls, and visibility was never what prevented them: the state
+machine is. `Load` refuses anything but a freshly constructed scene; `Tick`
+refuses a scene that is not loaded and a frame index that does not advance;
+`Stop` and `Unload` run at most once and in that order whichever is called
+first; the author hooks stay `protected`. `Tick` and `Render` — the two calls
+whose *ordering within a frame* actually matters — have been public since M1,
+guarded by nothing but those same checks. Making the outer three public leaves
+the guarantee exactly where it was and stops pretending the compiler was
+holding it.
+
+**Verified from outside.** `Najm.Architecture.Tests` is deliberately absent from
+`Najm.Core`'s `InternalsVisibleTo` list, and now drives a scene there — assemble,
+load, clock, tick with a host-filled `InputBuffer`, render, stop, unload — plus
+the out-of-order refusals. If the visibility were reverted, that file would stop
+compiling.
+
+**Status:** Implemented.
+
+---
+
 ## Documentation conflicts
 
 Places where the reference set disagrees with itself. Recorded so the
