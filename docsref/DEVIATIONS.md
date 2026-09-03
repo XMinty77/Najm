@@ -1147,6 +1147,90 @@ key suppresses that key's text on its own side. `F1` and `F5` produce none.
 
 ---
 
+## 26. The camera-aware resolve seam is named two different ways in the reference
+
+**Docs:** §9.2 writes the router's mapping step as
+
+```csharp
+ResolvedNodeFrame frame = layer.Resolve(node, camera);
+```
+
+and describes the result as "local↔virtual transforms and resolved hit/visual
+bounds for the current layer, camera, viewport, and scale mode". §6.3, stating
+the camera-dependence rule, names the same capability differently: "camera-aware
+queries — `Layer.ResolveMatrix(node)` / `Layer.ResolveBounds(node)`", with no
+camera parameter.
+
+**Decision:** implement all three — `Layer.Resolve(Node2D)`,
+`Layer.ResolveMatrix(Node2D)`, `Layer.ResolveBounds(Node2D)` — and **drop the
+camera parameter**. A `WorldLayer2D` owns its camera and a `ScreenLayer` has
+none, so the layer already knows; taking one as an argument would let a caller
+resolve against a camera the layer is not framing with, which is a wrong answer
+the API invited. §6.3's shape is therefore the one that survives, and §9.2's
+snippet compiles against it by dropping one argument.
+
+`ResolvedNodeFrame` exposes `LocalToVirtualMatrix` / `VirtualToLocalMatrix` for
+the transforms and `VirtualToLocal(point)` / `LocalToVirtual(point)` for the
+mappings, so §9.2's `frame.VirtualToLocal(pointerVirtual)` and
+`frame.HitBoundsVirtual.Contains(pointerVirtual)` are both literal. The `Matrix`
+suffix exists only because the snippet spends the unsuffixed name on the method.
+
+**`ResolveBounds` returns *visual* bounds.** The reference does not say which of
+§6.6's three it means. §6.3 names culling and measurement as this query's
+consumers and §6.6 gives culling the visual value, so that is the reading taken;
+input gating wants `frame.HitBoundsVirtual`, which `Resolve` returns alongside
+it, and §6.6 assigns hit bounds to input explicitly.
+
+**Ownership is structural, not attachment-based.** `Resolve` accepts any node
+whose tree roots at the layer, attached or not, and finds the scene through the
+same attached/owner/reserved chain `WorldLayer2D.FitRect` already uses. That is
+what keeps the promise that framing a layer in a scene's constructor gives the
+same answer the render will.
+
+**Two supporting members the reference implies and never declares:**
+`Node2D.HitTest(Vector2 local)` — §6.6's "exact or conservative local hit test"
+and the second half of §9.2's gate, defaulting to `HitBounds.Contains(local)` —
+and `Rect.Contains(Vector2)`, which §9.2's snippet calls. `Contains` is
+**half-open**, `[Left, Right)` by `[Top, Bottom)`, because the default
+`HitBounds` is `default(Rect)` and a closed test would make every plain node a
+hit at its own origin.
+
+**Scale pinning is resolved here by construction and is currently a no-op.**
+`Transform2D.ScaleMode` refuses `ScaleMode.Virtual` today (it is unimplemented,
+and refusing beats rendering it silently as `Inherit`), so every settable value
+resolves exactly. The seam is in the right place for pinning to land in: it is
+the layer, holding the camera, that computes the mapping, which is what §6.3
+requires and why `WorldMatrix` stays camera-free.
+
+**Status:** Implemented.
+
+---
+
+## 27. `Layer.ReceivesInput` — the participation flag §5.2 counts and never declares
+
+**Docs:** §5.2 defines a layer as "a coordinate space + an optional camera
+reference + a root node subtree + a persistent render target + **input
+participation** + presentation state", and §9.2 routes "each input-participating
+layer". No property is ever named, and the presentation-state list that follows
+enumerates seven other properties by name.
+
+**Decision:** `public bool ReceivesInput { get; set; } = true` on `Layer`, and
+the router walks a layer only when `ReceivesInput && Visible`.
+
+**Why `Visible` is part of it:** §6.1 says an invisible *node* "skips the subtree
+for Render **and** hit-testing". The same reading one level up is the only
+consistent one — an invisible layer is not there to be clicked — and it means a
+scene hiding a layer does not also have to remember to stop it routing.
+`Opacity == 0` is deliberately *not* part of it, though it does skip rendering
+(`RenderTraverser.ParticipatesInRender`): a fully faded layer is present and
+merely transparent, exactly as a fully faded node is, and a fade-in that becomes
+clickable one frame before it becomes visible is the lesser surprise compared
+with a slider that stops working at the bottom of a fade.
+
+**Status:** Implemented.
+
+---
+
 ## Documentation conflicts
 
 Places where the reference set disagrees with itself. Recorded so the

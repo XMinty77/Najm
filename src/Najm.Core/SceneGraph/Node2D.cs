@@ -137,6 +137,34 @@ public class Node2D : Node
     /// </remarks>
     public virtual Rect HitBounds => GeometryBounds;
 
+    /// <summary>Returns whether a point in this node's local space hits it.</summary>
+    /// <param name="local">The point, already carried into this node's local coordinates.</param>
+    /// <remarks>
+    /// <para>
+    /// The exact half of §6.6's "an exact or conservative local hit test", and the second half of
+    /// §9.2's two-step gate: the router first rejects the node with its resolved
+    /// <see cref="HitBounds"/> — a cheap axis-aligned rectangle in virtual space — and only then
+    /// maps the point down here and asks. The split is what keeps a walk over hundreds of nodes
+    /// cheap while still letting a disc be a disc.
+    /// </para>
+    /// <para>
+    /// The default answers from <see cref="HitBounds"/>, which is a rectangle, so it is exact for
+    /// rectangular content and conservative for everything else. Overriding is how a node stops
+    /// claiming the corners it does not draw:
+    /// <c>public override bool HitTest(Vector2 local) =&gt; local.Length() &lt;= radius;</c>
+    /// </para>
+    /// <para>
+    /// <strong>An override must stay inside <see cref="HitBounds"/>.</strong> The bounds are the
+    /// gate; a point the rectangle rejects never reaches this method, so returning true for
+    /// something outside them has no effect other than to mislead the next reader.
+    /// </para>
+    /// <para>
+    /// Being hit is not the same as receiving anything: dispatch goes to nodes implementing
+    /// <see cref="IInteractive"/>, and §9.3 makes that opt-in on purpose.
+    /// </para>
+    /// </remarks>
+    public virtual bool HitTest(Vector2 local) => HitBounds.Contains(local);
+
     /// <summary>
     /// Gets the conservative local-coordinate bound of what this node itself paints. The default
     /// follows <see cref="GeometryBounds"/>.

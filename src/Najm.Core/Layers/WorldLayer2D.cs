@@ -142,7 +142,7 @@ public class WorldLayer2D : Layer
                 return new Vector2(viewport.Width, viewport.Height);
             }
 
-            var scene = AttachedScene ?? OwnerStack?.Owner ?? ReservationStack?.Owner;
+            var scene = ResolvedScene;
             return scene is not null
                 ? scene.VirtualResolution
                 : throw new InvalidOperationException(

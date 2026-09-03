@@ -1,3 +1,5 @@
+using System.Numerics;
+
 namespace Najm.Core;
 
 /// <summary>Describes an axis-aligned rectangle in backend-neutral local coordinates.</summary>
@@ -71,4 +73,16 @@ public readonly record struct Rect
 
     /// <summary>Gets whether either dimension is zero.</summary>
     public bool IsEmpty => Width == 0f || Height == 0f;
+
+    /// <summary>Returns whether a point lies inside this rectangle.</summary>
+    /// <param name="point">The point to test, in the same space as the rectangle.</param>
+    /// <remarks>
+    /// <strong>Half-open</strong>, on <c>[Left, Right)</c> by <c>[Top, Bottom)</c>. Two consequences
+    /// are the reason: an <see cref="IsEmpty"/> rectangle contains nothing — which matters because
+    /// the default <see cref="Najm.Core.Node2D.HitBounds"/> is <c>default(Rect)</c>, and a closed
+    /// test would make every plain node a hit at its own origin — and tiling rectangles partition
+    /// the plane instead of sharing their seams.
+    /// </remarks>
+    public bool Contains(Vector2 point) =>
+        point.X >= X && point.X < X + Width && point.Y >= Y && point.Y < Y + Height;
 }
