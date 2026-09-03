@@ -1427,6 +1427,114 @@ compiling.
 
 ---
 
+## 32. `WrapBackbuffer` — the method §16 names and never declares
+
+**Docs:** §16's `Najm.Skia` row lists, among the two surface providers, "**incl.
+`WrapBackbuffer`**". That is the whole specification: a name, in a table, with no
+signature, no parameters, and no prose anywhere else in the reference set.
+Everything around it is specified — §4.6 gives the host the GL context and says
+`DesktopHost` "constructs the GPU Skia provider over the current GL context";
+NAJM-SKIA describes the provider's other operations — but the operation that
+turns a window's framebuffer into an `IRenderTarget` is a table cell.
+
+**Decision:**
+
+```csharp
+public IRenderTarget WrapBackbuffer(
+    PixelSize size,
+    int sampleCount,
+    int stencilBits,
+    ColorSpace colorSpace = ColorSpace.Srgb,
+    uint framebufferId = 0);
+```
+
+on `GpuSkiaSurfaceProvider`. It builds a `GRBackendRenderTarget` over the named
+framebuffer and an `SKSurface` at `GRSurfaceOrigin.BottomLeft`, then hands both
+to the existing `internal SkiaRenderTarget(surface, spec, caps)` constructor — so
+`SkiaRenderTarget` stays internal and no other type in `Najm.Skia` changes.
+
+**Why these four values.** They are exactly what GL will tell a host about its
+own default framebuffer and nothing else: `GL_SAMPLES`, `GL_STENCIL_BITS`, the
+framebuffer binding, and the size the host asked the window for. The alternative
+— taking a `SurfaceSpec` — reads better and is wrong, because a `SurfaceSpec`
+carries no stencil depth and Ganesh cannot describe a render target without one.
+
+**Three contract points, each a silent failure if missed, so each is in the XML
+doc:**
+
+- **Adopted, not owned.** Disposing the target disposes the Skia surface fronting
+  the framebuffer and must not touch the framebuffer. A host re-wraps on resize;
+  a test asserts `glIsFramebuffer` still answers true after the wrap is disposed.
+- **Bottom-left origin — the only one in Najm.** `CreateTarget`'s remarks already
+  said "Only a wrapped window framebuffer is bottom-left, and this provider does
+  not create one." This is the method that makes that sentence true. A missed
+  flip mirrors the frame vertically, which passes every check that reads a return
+  code, so the test scene is asymmetric top to bottom.
+- **`sampleCount` is clamped from 0 to 1.** GL answers `0` for a single-sampled
+  window and `SurfaceSpec` rejects `0`. Clamping here rather than in every host
+  is the same call `MaxSampleCountFor` already makes for its own floor.
+
+**What it does not do:** it does not normalize the sample count against the
+device maximum, the way `CreateTarget` does. A created surface is a request the
+provider is free to satisfy differently; a wrap is a *description* of a
+framebuffer that already exists, and a description that rounds is a lie. The
+consequence is visible in §5.3's fast path, which compares the output's spec
+against the layer targets' normalized specs — a window whose sample count is
+above the device maximum would fail that match and take the staged path, which
+is the correct outcome rather than a silent quality change.
+
+**Status:** Implemented.
+
+---
+
+## 33. Letterbox bars are cleared after the render, not before it
+
+**Docs:** §4.7 writes the desktop host's frame in this order:
+
+```text
+ clear letterbox bars
+ scene.Render(contentTarget)
+```
+
+and §5.1 says "letterbox bars are cleared to **`HostOptions.BarColor`** (default
+opaque black) by the host each frame, outside the content rect".
+
+**The same document makes that order impossible for a windowed host.** §5.3's
+merge is normative and ends with "one final **1:1 replace-blit** to the output"
+from an accumulation surface allocated *at output size* and *cleared each
+render*. A host presenting a window has one target — the wrapped backbuffer
+(#32), which covers the whole framebuffer — so that replace-blit writes every
+pixel of it, including the bars, with the transparent the accumulation was
+cleared to. Bars painted before the render are gone by the end of it. §4.7's
+`contentTarget` implies a target that is only the content rect; a GL default
+framebuffer cannot be wrapped as a centred sub-rectangle of itself, because
+`GRBackendRenderTarget` describes a whole framebuffer and its origin is the
+bottom-left corner rather than the content rect's.
+
+**Decision:** `DesktopHost` renders first and clears the bars afterwards, between
+the provider flush and the buffer swap, with a scissored GL clear of the up-to-two
+bar rectangles outside `FramePlacement.ResolveContentRect`, followed by
+`GpuSkiaSurfaceProvider.ResetGlState()`.
+
+**Why this is the same frame §4.7 describes.** Nothing draws between the two
+steps, and the two regions are disjoint by construction — the compositor writes
+the content rect, the host writes what is outside it. The rendered frame is
+identical; only the order in which two non-overlapping regions of one surface get
+written differs. The alternative readings both cost more than they are worth: an
+extra content-sized offscreen per frame purely to preserve a write order nobody
+can observe, or a `Src`-mode Skia pass over the bars, which is the same write
+through a heavier path.
+
+**Consequence worth stating:** on a default `BarColor` of opaque black this is
+invisible either way, because a transparent bar on an opaque window framebuffer
+already displays as black. It becomes visible the moment the bar color is
+anything else, which is exactly when a host that got this wrong would be
+debugged.
+
+**Status:** Implemented.
+
+---
+
 ## Documentation conflicts
 
 Places where the reference set disagrees with itself. Recorded so the

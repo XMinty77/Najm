@@ -292,6 +292,120 @@ public sealed class GpuSkiaSurfaceProvider : ISurfaceProvider
         return maximum < 1 ? 1 : maximum;
     }
 
+    /// <summary>Wraps the host's window framebuffer as a bottom-left-origin render target.</summary>
+    /// <param name="size">
+    /// The framebuffer's current size in <em>device</em> pixels — a window's framebuffer size, not
+    /// its logical size, which differ under hi-DPI.
+    /// </param>
+    /// <param name="sampleCount">
+    /// The framebuffer's multisample count, as GL reports it. GL answers <c>0</c> for a
+    /// single-sampled window and <see cref="SurfaceSpec"/> rejects zero, so this clamps <c>0</c> up
+    /// to <c>1</c> rather than making every host remember to.
+    /// </param>
+    /// <param name="stencilBits">
+    /// The framebuffer's stencil depth, as GL reports it. Ganesh needs stencil for its
+    /// clip-and-cover work on the target it is handed; a window that came up with <c>0</c> here was
+    /// created without a stencil buffer, and the fix is in the window's pixel-format request rather
+    /// than in this call.
+    /// </param>
+    /// <param name="colorSpace">The framebuffer's color-space tag (§3.4 — surfaces are never untagged).</param>
+    /// <param name="framebufferId">The GL framebuffer name; the default framebuffer is <c>0</c>.</param>
+    /// <returns>A target that draws straight into that framebuffer.</returns>
+    /// <remarks>
+    /// <para>
+    /// <strong>Adopted, not owned.</strong> Disposing the returned target releases the Skia surface
+    /// that fronts the framebuffer and nothing else — the framebuffer itself belongs to the window
+    /// and outlives every wrap of it. A host therefore disposes the old target and takes a new one
+    /// whenever the window resizes; a wrap describes one size and keeping a stale one is how a
+    /// resized window ends up rendering into a rectangle it no longer has.
+    /// </para>
+    /// <para>
+    /// <strong>Bottom-left origin — the one surface in Najm that is.</strong>
+    /// <see cref="CreateTarget"/> says a wrapped window framebuffer is the exception it does not
+    /// create; this is the method that creates it. GL's framebuffer origin is the bottom-left
+    /// corner, so the surface is tagged <see cref="GRSurfaceOrigin.BottomLeft"/> and Skia does the
+    /// flip internally. Nothing above this line changes: the engine's Y-down virtual space, the
+    /// compositor's staged merge and its single-layer fast path all draw through the same
+    /// <see cref="SkiaRenderTarget"/> contract and land the right way up.
+    /// </para>
+    /// <para>
+    /// <strong>The frame is placed by whoever renders into it, not here.</strong> The target
+    /// covers the whole framebuffer, so <see cref="Scene.Render(IRenderTarget)"/> fits and centres
+    /// the virtual frame inside it per <see cref="FramePlacement"/>, and the leftover arrives as the
+    /// transparent bars the compositor's accumulation surface was cleared to. Painting those bars a
+    /// host's <c>BarColor</c> (§5.1) is the host's job and happens <em>after</em> the render,
+    /// because §5.3's final merge is a replace-blit over the whole output and would otherwise
+    /// overwrite them.
+    /// </para>
+    /// <para>
+    /// <strong>Make the GL context current first.</strong> Like every other entry point here this
+    /// one is bound to the provider's thread, and the framebuffer it names is resolved against
+    /// whatever context is current on it.
+    /// </para>
+    /// </remarks>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// <paramref name="size"/> is empty, <paramref name="sampleCount"/> or
+    /// <paramref name="stencilBits"/> is negative, or <paramref name="colorSpace"/> has no GPU
+    /// realization.
+    /// </exception>
+    /// <exception cref="InvalidOperationException">Skia declined to wrap the framebuffer.</exception>
+    /// <exception cref="ObjectDisposedException">The provider has been disposed.</exception>
+    public IRenderTarget WrapBackbuffer(
+        PixelSize size,
+        int sampleCount,
+        int stencilBits,
+        CoreColorSpace colorSpace = CoreColorSpace.Srgb,
+        uint framebufferId = 0)
+    {
+        EnsureUsable();
+        if (size.IsEmpty)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(size),
+                size,
+                "A framebuffer wrap needs positive dimensions.");
+        }
+
+        ArgumentOutOfRangeException.ThrowIfNegative(sampleCount);
+        ArgumentOutOfRangeException.ThrowIfNegative(stencilBits);
+
+        var colorType = RasterSkiaSurfaceProvider.ResolveColorType(colorSpace, nameof(colorSpace));
+        var spec = new SurfaceSpec(size.Width, size.Height, Math.Max(1, sampleCount), colorSpace);
+        var framebufferInfo = new GRGlFramebufferInfo(framebufferId, SizedFormatFor(colorType));
+
+        // Disposed immediately: Skia copies the description into the surface, exactly as it does
+        // for the texture wrap above, so holding it would pin a second handle to no purpose.
+        using var backendTarget = new GRBackendRenderTarget(
+            size.Width,
+            size.Height,
+            sampleCount,
+            stencilBits,
+            framebufferInfo);
+        using var properties = new SKSurfaceProperties(SKPixelGeometry.Unknown);
+        var surface = SKSurface.Create(
+            context!,
+            backendTarget,
+            GRSurfaceOrigin.BottomLeft,
+            colorType,
+            ColorSpaceFor(colorSpace),
+            properties)
+            ?? throw new InvalidOperationException(
+                $"Skia declined to wrap GL framebuffer {framebufferId} as a {size.Width}×{size.Height} "
+                + $"target at {sampleCount} sample(s) with {stencilBits} stencil bit(s). The "
+                + "framebuffer must be complete in this provider's GL context and match the stated "
+                + "format.");
+
+        try
+        {
+            return new SkiaRenderTarget(surface, spec, Caps);
+        }
+        catch
+        {
+            surface.Dispose();
+            throw;
+        }
+    }
+
     /// <summary>Wraps an externally owned GL texture as a draw-stable <see cref="IImage"/>.</summary>
     /// <param name="textureId">The non-zero GL name of a texture from this provider's GL context.</param>
     /// <param name="size">The texture's dimensions in pixels.</param>
@@ -514,6 +628,15 @@ public sealed class GpuSkiaSurfaceProvider : ISurfaceProvider
     /// </remarks>
     internal SKColorSpace ColorSpaceFor(CoreColorSpace colorSpace) =>
         colorSpace == CoreColorSpace.LinearSrgb ? linearSrgb : srgb;
+
+    /// <summary>Gets the GL sized internal format one wrapped surface's color type is stored in.</summary>
+    /// <remarks>
+    /// Ganesh needs the storage format, not only the color type, to describe a framebuffer it did
+    /// not allocate. The two values match <see cref="GlTextureOptions.Rgba8"/> and
+    /// <see cref="GlTextureOptions.Rgba16f"/>, which is the same pairing the texture wrap uses.
+    /// </remarks>
+    private static uint SizedFormatFor(SKColorType colorType) =>
+        colorType == SKColorType.RgbaF16 ? GlTextureOptions.Rgba16f : GlTextureOptions.Rgba8;
 
     private void ValidateWrapRequest(uint textureId, PixelSize size, in GlTextureOptions options)
     {

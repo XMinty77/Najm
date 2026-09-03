@@ -134,6 +134,9 @@ internal static class TestGl
     [DllImport(Library)]
     internal static extern int glIsTexture(uint texture);
 
+    [DllImport(Library)]
+    internal static extern int glIsFramebuffer(uint framebuffer);
+
     /// <summary>Compiles one shader stage, failing with the driver's log rather than a status code.</summary>
     internal static uint CompileShader(uint type, string source)
     {
