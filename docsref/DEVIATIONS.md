@@ -1060,6 +1060,93 @@ reported — no file-level check that also reports a size mismatch — is answer
 
 ---
 
+## 24. The input vocabulary §9 names but never defines
+
+**Docs:** §9.1 lists what an `InputBlock` carries — "pointer (unified mouse/touch
+with a **pointer id**), keyboard down/up, **text input (rune) events** … and
+scroll", plus "snapshots … pointer position/buttons, key states". §9.3 declares
+one type in full, `PointerArgs`, and mentions a `PointerButton` in it. Nothing in
+the reference names a key enum, a modifier set, an event kind, or the event type
+itself, and no other document does either.
+
+**Decision:** define them, in `Najm.Core`, as the smallest set the listed
+behaviour needs: `Key`, `KeyModifiers`, `PointerButton`, `InputEventKind`, and
+`InputEvent`.
+
+- **`Key`** enumerates keys by **physical position under a US layout**, not by
+  character. `Key.Q` is the key where Q sits, whatever an AZERTY layout types
+  from it. This is what makes WASD a square everywhere, and it is why §9.1's
+  "key codes alone are the classic trap" needs the separate text event to be
+  usable at all. Values are Najm's own — a host translates rather than casts —
+  and `Key.Unknown` is the legal landing place for anything a host cannot map.
+- **`PointerButton` is one `[Flags]` enum, not two types.** §9.3 gives
+  `PointerArgs` a singular `Button` and §9.1 gives the snapshot a plural
+  "buttons"; those are the same vocabulary at two cardinalities. An event carries
+  one flag, a snapshot carries the union, and no conversion sits between them.
+- **`InputEvent` is a single struct for every kind.** Order across kinds is
+  load-bearing — §9.2 dispatches in arrival order, so a click between two
+  keystrokes must stay between them — and a per-kind hierarchy would need either
+  a heap object per event (against §3.6) or parallel queues (which lose the
+  interleaving). One value type keeps one ordered buffer.
+- **Text is a `System.Text.Rune`**, so an astral character is one event rather
+  than a surrogate pair split across two.
+
+**Why not defer:** §9.1's list is a contract about *what a scene can observe*,
+and it cannot be honoured without types to observe it through. The alternative —
+an untyped or platform-shaped surface — would put a rewrite between this and
+every scene written against it.
+
+**Left to the owner:** the *membership* of `Key` is a judgement call the
+reference does not constrain. It is currently the ordinary keys of a physical
+keyboard (the GLFW/USB-HID set), with no media keys, no international
+extras beyond the US positions, and no distinction the platform does not report.
+
+**Status:** Implemented.
+
+---
+
+## 25. `InputBuffer` — the pooled writer §9.1 implies and never names
+
+**Docs:** §4.3 says "`InputBlock` references per-frame **pooled** buffers
+(cleared and refilled, never reallocated)"; §9.1 says hosts "translate platform
+events and **inverse-letterbox** pointer coordinates into virtual space before
+the scene ever sees them"; §4.6 says a host "synchronizes platform input … into
+Core abstractions" before each tick. Something must own those buffers and accept
+those translated events. The reference never says what it is called or what its
+surface looks like.
+
+**Decision:** `public sealed class InputBuffer` in `Najm.Core`. It owns the event
+array, the parallel consumed-flag array, and the key bitset for the life of the
+run; `BeginFrame()` empties the event list in place; `MovePointer`,
+`PressPointer`, `ReleasePointer`, `ScrollPointer`, `PressKey`, `ReleaseKey`, and
+`EnterText` push; `Block` hands out the `readonly struct` view. Arrays grow by
+doubling when a frame carries more events than any frame before it — a §3.6
+transition — and never shrink, so the warm frame allocates nothing. An allocation
+test pins that.
+
+**Why a separate type rather than methods on `InputBlock`:** the block is a
+`readonly struct` the reference passes by `in` to scenes. Mutation has to live
+somewhere the scene cannot reach, and the split also draws the §4.6 line exactly
+where the reference draws it — the host writes, the scene reads.
+
+**Host-reserved keys are declared, not defaulted.** §9.1 reserves the overlay
+toggle (default `F1`) and warm restart (default `F5`) to the host, "both
+rebindable via `HostOptions`". `HostOptions` is a `Najm.Host.Desktop` type and
+does not exist yet, and Core has neither an overlay nor a restart to bind, so
+**`InputBuffer` reserves nothing by default** and a host declares its
+reservations with `Reserve(Key)`. `PressKey`/`ReleaseKey` return `false` when
+they drop a reserved key, which is the host's cue to act on it. Reserving a key
+that is currently held clears its held state, because its release will be dropped
+by the reservation that now exists.
+
+**The gap that stays a gap:** `EnterText` cannot be filtered by reservation,
+because a text event carries no key position. A host reserving a text-producing
+key suppresses that key's text on its own side. `F1` and `F5` produce none.
+
+**Status:** Implemented.
+
+---
+
 ## Documentation conflicts
 
 Places where the reference set disagrees with itself. Recorded so the
