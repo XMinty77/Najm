@@ -154,6 +154,7 @@ This example uses screen-space coordinates and exports the loaded state directly
 | `src/Najm.Text` | HarfBuzz shaping, font ownership, layout, and bundled fonts |
 | `src/Najm.Lib` | Higher-level authoring nodes and conveniences |
 | `src/Najm.Utils` | Color, angles, easing, and curve utilities |
+| `src/Najm.Host.Desktop` | Desktop live host: window, GL context, event pump, letterboxing, presentation |
 | `samples` | Authored visual productions used to test the real authoring experience |
 | `tests` | Contract, golden-image, native-integration, determinism, and allocation tests |
 | `benchmarks` | BenchmarkDotNet suites and recorded baselines |

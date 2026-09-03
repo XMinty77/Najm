@@ -55,8 +55,9 @@ public sealed class WrappedBackbufferTests
         }
 
         var difference = GpuPixels.Compare(wrapped, created, tolerance: 4);
-        Assert.IsTrue(
-            difference.MeanAbsolute < 1.0,
+        Assert.IsLessThan(
+            1.0,
+            difference.MeanAbsolute,
             $"A wrapped framebuffer must carry the same frame as a created target: {difference.Describe()}.");
 
         // Named separately from the aggregate: the halves of TwoBandScene differ by far more than

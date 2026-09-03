@@ -1715,6 +1715,21 @@ all, so the deferred items were untestable in the only available environment.
 Rendered PNG therefore becomes the sole means of seeing a change, and acceptance
 stays visual through rendered stills rather than a live window.
 
+**The stated reason is now known to be false, and the phasing is not.** A windowed
+host does run in this environment. `Najm.Host.Desktop` opens a real X11 window on
+`Xvfb` with an OpenGL ES 3.2 context over llvmpipe, renders a scene into its
+default framebuffer through `WrapBackbuffer` (#32), takes synthetic XTEST input
+through the real router, and is checked against a frame captured from the X server
+rather than read back from GL. So "rendered PNG is the sole means of seeing a
+change" no longer holds either: a live frame can be captured and asserted on here.
+
+What remains true is that Xvfb is not a stage machine. There is no vsync, no
+compositor and no window manager, so frame pacing, present latency, tearing, focus
+policy, resize by dragging, fullscreen and hi-DPI cannot be exercised at all, and
+llvmpipe's timings predict nothing about a real GPU. Whatever the right phasing
+for the remaining phase-4 items is, it should now be argued from scope and risk
+rather than from an environment claim that has been tested and does not hold.
+
 ### `Najm.Text`'s CSharpMath dependency
 
 `NAJM-TEXT.md` §0 pins `CSharpMath.SkiaSharp`, and `ARCHITECTURE.md` §16 lists
