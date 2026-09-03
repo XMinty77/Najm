@@ -11,6 +11,7 @@
   <Project Path="src/Najm.Utils/Najm.Utils.csproj" />
   <Project Path="tests/Najm.Architecture.Tests/Najm.Architecture.Tests.csproj" />
   <Project Path="tests/Najm.Core.Tests/Najm.Core.Tests.csproj" />
+  <Project Path="tests/Najm.Host.Desktop.Tests/Najm.Host.Desktop.Tests.csproj" />
   <Project Path="tests/Najm.Lib.Tests/Najm.Lib.Tests.csproj" />
   <Project Path="tests/Najm.Skia.Tests/Najm.Skia.Tests.csproj" />
   <Project Path="tests/Najm.Text.Tests/Najm.Text.Tests.csproj" />

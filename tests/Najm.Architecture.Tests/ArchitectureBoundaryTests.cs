@@ -30,6 +30,59 @@ public sealed class ArchitectureBoundaryTests
             "src/Najm.Lib/Najm.Lib.csproj",
             "src/Najm.Core/Najm.Core.csproj",
             "src/Najm.Utils/Najm.Utils.csproj");
+
+        // §16: the desktop host composes — Core, Skia, Silk.NET — and composes nothing else. It
+        // notably does not reference Najm.Text or Najm.Audio, which is what §4.2's injection recipe
+        // buys: HostOptions carries a typesetter and an audio sink the host never constructs.
+        AssertProjectReferences(
+            "src/Najm.Host.Desktop/Najm.Host.Desktop.csproj",
+            "src/Najm.Core/Najm.Core.csproj",
+            "src/Najm.Skia/Najm.Skia.csproj",
+            "src/Najm.Utils/Najm.Utils.csproj");
+    }
+
+    /// <summary>
+    /// §16's table gives the windowing dependency to the host row and to no other, and the host
+    /// feasibility work is the reason to check rather than assume.
+    /// </summary>
+    /// <remarks>
+    /// The pressure is real: the seam between a window's framebuffer and a Skia surface has one
+    /// natural home in each project, and putting it in the backend would have cost `Najm.Skia` a
+    /// Silk.NET reference for one method. `WrapBackbuffer` takes a framebuffer id and a size
+    /// instead, so the backend never learns what a window is.
+    /// </remarks>
+    [TestMethod]
+    public void OnlyTheHostReferencesTheWindowingLibrary()
+    {
+        foreach (var project in new[]
+                 {
+                     "src/Najm.Utils/Najm.Utils.csproj",
+                     "src/Najm.Core/Najm.Core.csproj",
+                     "src/Najm.Lib/Najm.Lib.csproj",
+                     "src/Najm.Skia/Najm.Skia.csproj",
+                     "src/Najm.Text/Najm.Text.csproj",
+                 })
+        {
+            AssertLockedGraphExcludes(project, ["Silk.NET"]);
+        }
+
+        var host = XDocument.Load(
+            Path.Combine(RepositoryRoot, "src/Najm.Host.Desktop/Najm.Host.Desktop.csproj"));
+        var packages = host
+            .Descendants("PackageReference")
+            .Select(element => (string?)element.Attribute("Include"))
+            .Where(name => name is not null)
+            .Cast<string>()
+            .ToArray();
+
+        Assert.IsNotEmpty(packages, "The host is the project that carries the windowing library.");
+        foreach (var package in packages)
+        {
+            Assert.StartsWith(
+                "Silk.NET",
+                package,
+                $"The host takes windowing packages and no others; it declares '{package}'.");
+        }
     }
 
     [TestMethod]
