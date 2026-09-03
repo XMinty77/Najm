@@ -1535,6 +1535,153 @@ debugged.
 
 ---
 
+## 34. `DesktopHost` and `HostOptions` — the host §4.6 writes calls to and never declares
+
+**Docs:** the reference uses both types before either exists. §4.6 lists `DesktopHost`'s
+responsibilities and writes `new DesktopHost(options).Run(() => new PhononScene(seed: 7))`;
+§4.7 writes its frame loop; §15 says `Run(sceneInstance)` "remains single-run sugar and
+cannot warm-restart because no factory exists"; §5.1 names `HostOptions.BarColor`; §9.1
+names the reserved overlay and restart keys as "rebindable via `HostOptions`"; §4.2 has
+`Typesetter` and `Audio` arrive "via `HostOptions`". No signature for either type appears
+anywhere.
+
+**Decision:** `Najm.Host.Desktop` ships `DesktopHost` with exactly the two entry points the
+reference calls —
+
+```csharp
+public DesktopHost(HostOptions options);
+public void Run(Func<Scene> factory);   // restartable, §4.6's form
+public void Run(Scene scene);           // §15's single-run sugar
+```
+
+— and `HostOptions` as an initialized property bag holding `Width`, `Height`, `Title`,
+`BarColor`, `VSync`, `MaxDt`, `RestartKey`, `OverlayKey`, `Assets`, `Typesetter`, `Audio`.
+
+**The project lives in `src/`, not `hosts/`.** §16's table names the project
+`Najm.Host.Desktop` and says nothing about directories. Every other row of that table is a
+directory under `src/`, so this one is too; a `hosts/` tree holding one project would be a
+second layout convention bought with nothing.
+
+**What is deliberately absent from `HostOptions`:** anything about the scene. No virtual
+resolution, no clear colour, no render scale. §5.1 makes output size a driver parameter and
+virtual resolution a scene property, and an option that let a host override the latter would
+be exactly the leak that section exists to prevent.
+
+**`Assets` defaults to `NullAssets`, which §4.2 does not say.** §4.2 has the host construct
+`Assets`, `Surfaces` and `Caps` natively and inject only `Typesetter` and `Audio`. `Surfaces`
+and `Caps` are constructed natively here. `IAssets` has no realization anywhere in the
+repository yet, so the host cannot construct one; the property is the injection point until
+there is something to construct, and the default is Core's null object.
+
+**`OverlayKey` is reserved although there is no overlay.** §9.1 makes the overlay toggle
+host-reserved and §15 describes the overlay itself; the overlay is not built. The host
+reserves the key anyway and swallows it. The alternative — leave `F1` to scenes until the
+overlay lands — means building the overlay later silently takes a key some scene had come to
+rely on. Reserving it now costs one key and makes the contract stable. `Key.Unknown` in either
+key property disables that reservation.
+
+**Status:** Implemented.
+
+---
+
+## 35. Window space is logical; the framebuffer is physical
+
+**Docs:** §3.3's closed vocabulary defines the fourth space as "**Window** — physical pixels;
+exists only inside hosts", and §5.1 says `DesktopHost` derives its render scale "from the
+letterboxed window (hi-DPI falls out for free)".
+
+**The platform disagrees with the first half.** A window is created at a logical size, reports
+a `Size` in logical units and a `FramebufferSize` in device pixels, and delivers pointer
+positions in the *logical* ones. On a 2× display those are two different numbers for the same
+place. So "window space" as §3.3 defines it — physical pixels — is not the space the platform
+hands the host, and a host that treated a pointer position as device pixels would be exactly
+half right on every hi-DPI machine.
+
+**Decision:** `DesktopHost` keeps §3.3's vocabulary and converts into it. `Letterbox` is
+resolved against `FramebufferSize` and works entirely in device pixels, matching §3.3's
+definition and the render target's own units; incoming pointer positions are multiplied by
+`FramebufferSize / Size` before they reach it. That conversion is the only place the two units
+meet, and it is the mechanism behind §5.1's "hi-DPI falls out for free": the render scale is
+already derived from the larger framebuffer, so the same inverse mapping serves both.
+
+**Why not resolve the letterbox in logical units instead:** the content rectangle has to be in
+the render target's coordinates, because that is what the bar clearing scissors against and
+what `FramePlacement` is computed from. Converting the one thing that arrives in the other unit
+is one multiply per event; converting the frame geometry would be a second geometry to keep in
+step with the compositor's.
+
+**Status:** Implemented.
+
+---
+
+## 36. Nothing ends a live run except the window closing
+
+**Docs:** §4.7's loop is `while window open`. §15 reserves `F5` for warm restart and `F1` for
+the overlay and reserves nothing for quitting. §4.6 gives the host the event pump and the
+presentation and says nothing about termination. No section anywhere gives a scene, or the
+program that constructed the host, a way to say "stop".
+
+**What this means in practice:** `DesktopHost.Run` returns when the platform reports the window
+closing, and there is no other way out. A scene that wants to end a presentation cannot; a test
+harness cannot stop the host it started; `Run` occupies the calling thread with no handle to
+interrupt it. Under X11 with no window manager this also means an automated run has to send
+`WM_DELETE_WINDOW` itself, because there is nothing else that will.
+
+**Decision: implement §4.7 as written and record the gap rather than invent an API.** The
+shapes that would close it are all small and all different — a reserved quit key in
+`HostOptions`, a `RequestClose()` on the host, a `bool` returned from a scene hook, a
+`CancellationToken` on `Run` — and each implies something about who owns the decision. That is
+the owner's call, not a detail to settle by picking one.
+
+**What this costs today:** nothing for a live talk, where closing the window is the natural
+end. It costs an automated end-to-end run the ability to stop the host politely; the
+verification harness sends the close message through Xlib instead, which is what a close button
+does anyway and is therefore arguably the more faithful test.
+
+**Status:** Open — question for the owner.
+
+---
+
+## 37. The far edge of the content rect is a partially covered pixel
+
+**Docs:** §5.1 has the host clear the bars "outside the content rect".
+`FramePlacement.ResolveContentRect` rounds the content extents outward, documented as "extents
+round outward so a fractional edge is covered rather than cropped". §5.3 clears the
+accumulation surface to transparent each render.
+
+**What actually happens.** `virtualExtent × renderScale` is rarely a whole number, so the
+content rectangle is up to one pixel larger than the frame drawn into it. That last row or
+column receives *partial* coverage against a transparent surface — and a window framebuffer is
+opaque, so the partial alpha is discarded and the pixel reads as the band colour darkened
+toward black. Measured on a 500×700 window at a 1920×1080 virtual resolution: rows 209–489 are
+the scene, row 490 is 29% covered and reads `(68, 26, 32)` where the band is `(230, 51, 51)`,
+row 491 onward is bar. It is a visible dark hairline along the bottom edge. On a 1200×500
+window the same column is 90% covered and is nearly invisible. The bars themselves are exact:
+every pixel outside the content rectangle is `BarColor` to the byte.
+
+**Why it is not a host bug.** The host clears exactly what §5.1 says to clear — outside the
+content rect — and the fringe is inside it. The same fractional edge exists in an offline render
+at a non-integral scale; there it is a partially transparent edge pixel, which is unremarkable,
+and only an opaque presentation surface turns it into a visible line.
+
+**Decision: leave it, and record it.** Three fixes are available and they differ in what they
+give up, which makes the choice the owner's:
+
+1. **Bars cover everything outside the *exact* fitted rectangle**, rounded to nearest rather
+   than outward. Trades up to half a pixel of cropped content for no fringe. Two lines in the
+   host.
+2. **Draw `BarColor` under the whole frame with destination-over** after the render instead of
+   clearing the bars. Composites the fringe correctly toward `BarColor` rather than toward
+   black — but it also fills any transparent region *inside* the frame, which changes what a
+   scene with a transparent layer looks like, and §5.1 scopes bar colour to outside the content
+   rect.
+3. **Make `ResolveContentRect` round to nearest instead of outward** — an engine change that
+   moves the fringe rather than removing it, and touches offline output too.
+
+**Status:** Open — question for the owner.
+
+---
+
 ## Documentation conflicts
 
 Places where the reference set disagrees with itself. Recorded so the
