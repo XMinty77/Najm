@@ -149,8 +149,10 @@ public sealed class InputRouter
                 nameof(node));
         }
 
-        ref var state = ref RequirePointer(pointerId);
-        state.Captured = node;
+        // The index is resolved into a local first: `pointers[RequirePointer(id)] = ...` would load
+        // the array reference before the call that may replace it, and write into the old one.
+        var pointer = RequirePointer(pointerId);
+        pointers[pointer].Captured = node;
     }
 
     /// <summary>Releases a pointer's capture, if it has one.</summary>
@@ -265,14 +267,13 @@ public sealed class InputRouter
 
         for (var index = 0; index < pointerCount; index++)
         {
-            ref var state = ref pointers[index];
-            if (state.Captured is not null && IsWithin(state.Captured, root))
+            if (pointers[index].Captured is { } captured && IsWithin(captured, root))
             {
-                state.Captured = null;
+                pointers[index].Captured = null;
             }
-            if (state.Hovered is not null && IsWithin(state.Hovered, root))
+            if (pointers[index].Hovered is { } hovered && IsWithin(hovered, root))
             {
-                state.Hovered = null;
+                pointers[index].Hovered = null;
             }
         }
     }
@@ -340,17 +341,22 @@ public sealed class InputRouter
 
     private bool DispatchPointer(in InputEvent value)
     {
-        ref var state = ref RequirePointer(value.PointerId);
-        var virtualDelta = state.HasPosition ? value.Position - state.LastPosition : Vector2.Zero;
-        state.LastPosition = value.Position;
-        state.HasPosition = true;
+        // An index, not a `ref`: a handler invoked below may capture a pointer this router has
+        // never seen, which grows the array, and a reference into the old one would then be writing
+        // into a copy nobody reads. Indices survive the growth.
+        var pointer = RequirePointer(value.PointerId);
+        var virtualDelta = pointers[pointer].HasPosition
+            ? value.Position - pointers[pointer].LastPosition
+            : Vector2.Zero;
+        pointers[pointer].LastPosition = value.Position;
+        pointers[pointer].HasPosition = true;
 
         // Capture bypasses the walk (§9.2). Hover follows the captured node while it lasts, so a
         // drag that wanders off the node does not report an exit half way through.
-        var captured = state.Captured;
+        var captured = pointers[pointer].Captured;
         var target = captured ?? Pick(value.Position);
 
-        UpdateHover(ref state, target, value, virtualDelta);
+        UpdateHover(pointer, target, value, virtualDelta);
 
         if (target is not IInteractive receiver)
         {
@@ -371,18 +377,20 @@ public sealed class InputRouter
     }
 
     private void UpdateHover(
-        ref PointerState state,
+        int pointer,
         Node2D? target,
         in InputEvent value,
         Vector2 virtualDelta)
     {
-        var previous = state.Hovered;
+        var previous = pointers[pointer].Hovered;
         if (ReferenceEquals(previous, target))
         {
             return;
         }
 
-        state.Hovered = target;
+        // Recorded before either notification runs, so a handler asking HoverTarget sees the new
+        // answer and a re-entrant dispatch cannot notify twice.
+        pointers[pointer].Hovered = target;
         if (previous is IInteractive left)
         {
             left.OnPointerExit(BuildArgs(previous, value, virtualDelta));
@@ -435,11 +443,12 @@ public sealed class InputRouter
         return false;
     }
 
-    private ref PointerState RequirePointer(int pointerId)
+    /// <summary>Returns the index of a pointer's state, creating it on first sight.</summary>
+    private int RequirePointer(int pointerId)
     {
         if (TryFindPointer(pointerId, out var index))
         {
-            return ref pointers[index];
+            return index;
         }
 
         // Grows once per distinct pointer id, which is a transition cost (§3.6) and not a per-frame
@@ -450,7 +459,7 @@ public sealed class InputRouter
         }
 
         pointers[pointerCount] = new PointerState { Id = pointerId };
-        return ref pointers[pointerCount++];
+        return pointerCount++;
     }
 
     private struct PointerState

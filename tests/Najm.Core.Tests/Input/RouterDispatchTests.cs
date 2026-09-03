@@ -333,6 +333,46 @@ public sealed class RouterDispatchTests
     }
 
     [TestMethod]
+    public void PointerStateSurvivesAHandlerThatIntroducesNewPointers()
+    {
+        var log = new List<string>();
+        using var harness = new RouterHarness();
+        var node = harness.Add("node", log, Square, position: new Vector2(100f, 100f));
+        harness.Load();
+
+        // Entering captures eight pointers the router has never seen, which grows its state array
+        // out from under the dispatch that is running. The hover recorded a moment earlier must
+        // still be there afterwards.
+        var entered = false;
+        node.PointerDown = (owner, _) =>
+        {
+            if (entered)
+            {
+                return;
+            }
+
+            entered = true;
+            for (var pointerId = 1; pointerId <= 8; pointerId++)
+            {
+                harness.Router.Capture(owner, pointerId);
+            }
+        };
+
+        harness.Buffer.PressPointer(0, new Vector2(100f, 100f), PointerButton.Left);
+        harness.Tick();
+
+        Assert.AreSame(node, harness.Router.HoverTarget(0));
+        for (var pointerId = 1; pointerId <= 8; pointerId++)
+        {
+            Assert.AreSame(node, harness.Router.CaptureHolder(pointerId), $"pointer {pointerId}");
+        }
+
+        harness.Buffer.MovePointer(0, new Vector2(900f, 900f));
+        harness.Tick();
+        Assert.IsNull(harness.Router.HoverTarget(0), "Pointer zero kept its own state through the growth.");
+    }
+
+    [TestMethod]
     public void AWarmRoutedFrameAllocatesNoManagedBytes()
     {
         // §9.1 and §3.6: the block is a readonly struct over pooled buffers, the args are structs
