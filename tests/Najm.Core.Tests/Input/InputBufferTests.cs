@@ -16,8 +16,9 @@ public sealed class InputBufferTests
         var buffer = new InputBuffer();
         foreach (var key in Enum.GetValues<Key>())
         {
-            Assert.IsTrue(
-                (int)key <= (int)Key.Menu,
+            Assert.IsLessThanOrEqualTo(
+                (int)Key.Menu,
+                (int)key,
                 $"Key.{key} sits above Key.Menu; InputBuffer.KeyWords must grow with it.");
 
             buffer.PressKey(key);
@@ -145,7 +146,7 @@ public sealed class InputBufferTests
     {
         var buffer = new InputBuffer(capacity: 0);
         var initial = buffer.Capacity;
-        Assert.IsTrue(initial >= 8, "A zero request still gets a usable floor.");
+        Assert.IsGreaterThanOrEqualTo(8, initial, "A zero request still gets a usable floor.");
 
         for (var index = 0; index < 200; index++)
         {
@@ -154,7 +155,7 @@ public sealed class InputBufferTests
 
         var block = buffer.Block;
         Assert.AreEqual(200, block.EventCount);
-        Assert.IsTrue(buffer.Capacity >= 200);
+        Assert.IsGreaterThanOrEqualTo(200, buffer.Capacity);
         for (var index = 0; index < 200; index++)
         {
             Assert.AreEqual(new Vector2(index, index), block[index].Position);
