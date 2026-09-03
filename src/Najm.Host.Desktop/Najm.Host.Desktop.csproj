@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!-- ARCHITECTURE section 3.1 asks for warnings-as-errors in Utils and Core "at minimum". This
+         is a public host API on a public repository; it holds itself to the same line. -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Silk.NET.Windowing" />
+    <PackageReference Include="Silk.NET.Input" />
+    <PackageReference Include="Silk.NET.OpenGL" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../Najm.Core/Najm.Core.csproj" />
+    <ProjectReference Include="../Najm.Skia/Najm.Skia.csproj" />
+    <ProjectReference Include="../Najm.Utils/Najm.Utils.csproj" />
+  </ItemGroup>
+</Project>
