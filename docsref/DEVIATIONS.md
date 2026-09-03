@@ -1512,6 +1512,29 @@ remove the globals. A glyph missing from Najm's face silently falls back to
 CSharpMath's embedded copy. "Pinned font bytes" in the §2.2 reproducibility
 posture therefore means Najm's bytes *plus* the package's.
 
+### What "polling sees unconsumed input only" means for level snapshots
+
+`ARCHITECTURE.md` §9.1 says "Consumption is tracked alongside events;
+`Update`-phase polling sees **unconsumed** input only", and separately that the
+block carries "**Snapshots** for the polling API: pointer position/buttons, key
+states". The two sentences are in tension: consumption is defined per *event*,
+and a snapshot is not an event.
+
+The implementation reads it as: every *edge* query — `WasPressed`,
+`WasReleased`, `Scroll`, `Text` — filters by consumption, and every *level*
+query — `PointerPosition`, `Buttons`, `IsDown` — does not. So a scene polling
+for a click does not also see one a button already swallowed, while
+"is the left button down" keeps answering truthfully whatever the router did
+with the press.
+
+The alternative reading — that consuming a press should also hide the resulting
+held state — was rejected because the held state has no single owning event
+(the press may have arrived several frames ago, and the block that carried it is
+gone) and because a node consuming a press in order to *start* a drag would then
+be hiding exactly the state that says the drag is still happening.
+
+Unresolved: the reading is defensible but it is a reading.
+
 ### Direct-path bracket predicate
 
 The direct-path layer bracket triggers on "non-default blend or a backdrop"
