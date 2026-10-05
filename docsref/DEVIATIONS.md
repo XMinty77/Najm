@@ -15,6 +15,64 @@ Statuses: **Open** (decided, not yet implemented), **Implemented**,
 
 ---
 
+## Index
+
+Generated from the entries below; the entry is authoritative. The six documentation
+conflicts are listed after the table and are not numbered, because they record the reference
+set disagreeing with itself rather than the implementation departing from it.
+
+| # | Entry | Status |
+|---|---|---|
+| 1 | `Scene` has no per-tick hook | Implemented |
+| 2 | `Node.Render` is public, not protected | Implemented |
+| 3 | `Camera2D`'s world→virtual matrix | Implemented |
+| 4 | `SkiaExport.Png` | Implemented |
+| 5 | No portable seam for installing render scale and the base transform | Implemented |
+| 6 | Exception types for "fail loud" | Implemented |
+| 7 | `Camera2D.FitRect` takes the virtual resolution | Implemented |
+| 8 | Fast math preconditions the reference does not state | **Open** |
+| 9 | `IImage` admits externally owned, draw-stable images | Implemented |
+| 10 | `Scene.Render` currently has two semantics | Superseded |
+| 11 | `RenderDirect` drops layer presentation | Implemented |
+| 12 | The ffmpeg frame sink was built ahead of its milestone | Recorded |
+| 13 | `TypesetRequest.Text` is a `string`, not `RichContent` | Implemented |
+| 14 | `TextNode.MaxWidth` exists in order to refuse | Implemented |
+| 15 | Frame diagnostics: nothing in the reference describes a frame numerically | Implemented |
+| 16 | `ISurfaceProvider` states its own `RenderCaps` | Implemented |
+| 17 | The offline entry points take a backend | Implemented |
+| 18 | `FrameSink.PngFile` | Implemented |
+| 19 | `Wait.Until` evaluates its predicate in the pass that yields it | Implemented |
+| 20 | `Animate` has a `double` overload | Implemented |
+| 21 | An offline run with no stated length runs until the scene's work finishes | Implemented |
+| 22 | `Scene.Own` — resource ownership is the scene's, because a node has no end | Implemented |
+| 23 | A frame difference can report mismatched geometry instead of refusing it | Implemented |
+| 24 | The input vocabulary §9 names but never defines | Implemented |
+| 25 | `InputBuffer` — the pooled writer §9.1 implies and never names | Implemented |
+| 26 | The camera-aware resolve seam is named two different ways in the reference | Implemented |
+| 27 | `Layer.ReceivesInput` — the participation flag §5.2 counts and never declares | Implemented |
+| 28 | `IInteractive`'s signatures, and the two additions to `PointerArgs` | Implemented |
+| 29 | `InputRouter` — the type §9.2 describes and does not name | Implemented |
+| 30 | The determinism rule is enforced, not trusted | Implemented |
+| 31 | `Scene.Load`/`Stop`/`Unload` are public, because §4.6's host is outside Core | Implemented |
+| 32 | `WrapBackbuffer` — the method §16 names and never declares | Implemented |
+| 33 | Letterbox bars are cleared after the render, not before it | Implemented |
+| 34 | `DesktopHost` and `HostOptions` — the host §4.6 writes calls to and never declares | Implemented |
+| 35 | Window space is logical; the framebuffer is physical | Implemented |
+| 36 | Nothing ends a live run except the window closing | **Open** |
+| 37 | The far edge of the content rect is a partially covered pixel | **Open** |
+
+**Open and waiting on a decision:** 8 (Fast math preconditions), 36 (how a live run ends),
+37 (the partially covered content edge). Entry 12 is *Recorded retroactively*, which the entry
+itself names as the defect.
+
+**Documentation conflicts**, at the end of this file: fast-path numbering (resolved), easing
+names (resolved), M1 scope ROADMAP vs. PLAN (resolved, and its stated reason has since been
+falsified), `Najm.Text`'s CSharpMath dependency (resolved by executing the spike), what
+"polling sees unconsumed input only" means for level snapshots (**unresolved — a defensible
+reading, not a decision**), and the direct-path bracket predicate for an effect-only subtree
+(**unresolved, and it blocks the effect path**).
+
+---
 ## 1. `Scene` has no per-tick hook
 
 **Docs:** §4.1 declares `Scene` with `OnLoad`, `OnStart`, `OnStop`, `OnUnload`

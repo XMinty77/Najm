@@ -35,6 +35,11 @@ Thumbs.db
 *.tmp
 *.bak
 
+# Agent-tool local state. A shared .claude/settings.json is deliberately not ignored;
+# per-developer overrides and session checkpoints are.
+.claude/settings.local.json
+.claude/RESUME.md
+
 
 # Sample render output
 samples/**/out/

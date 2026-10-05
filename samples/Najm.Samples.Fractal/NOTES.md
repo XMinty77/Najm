@@ -15,13 +15,19 @@ tidied afterwards. Status sections are updated in place; the findings list only 
       `HeadlessGlContext`, `EglNative`, the `Gpu/` tests, ARCHITECTURE §4.5/§4.6/§7.5,
       NAJM-SKIA I.7).
 - [x] Project created, added to `Najm.slnx`.
-- [ ] Author-side GL binding (`Gl.cs`).
-- [ ] Shader + GL pipeline (`FractalShader.cs`, `FractalGpu.cs`).
-- [ ] Camera move (`Flight.cs`) and scene (`FractalScene.cs`, `Nodes.cs`).
-- [ ] GPU offline driver (`GpuOffline.cs`) — had to be written by hand, see F-1.
-- [ ] Perf measurement on llvmpipe.
+- [x] Author-side GL binding (`Gl.cs`).
+- [x] Shader + GL pipeline (`FractalShader.cs`, `FractalGpu.cs`).
+- [x] Camera move (`Flight.cs`) and scene (`FractalScene.cs`, `Nodes.cs`).
+- [x] GPU offline driver (`GpuOffline.cs`) — had to be written by hand, see F-1.
+- [x] Perf measurement on llvmpipe.
 - [ ] Palette / route iteration against real stills.
 - [ ] Final 1920x1080 60fps MP4 + stills.
+
+**Status as of 2026-10-05.** The seam works end to end and F-1 through F-4 were closed
+upstream in commit `a98e5fd`, so the hand-written `GpuOffline.cs` driver is no longer the
+only route — `OfflineBackend.Gpu` now owns the bring-up and teardown ordering. What is left
+is production polish rather than engine work: the palette has not been iterated against real
+stills and the final encode has not been cut.
 
 ---
 

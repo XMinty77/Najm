@@ -2,6 +2,14 @@
 
 **Purpose.** This roadmap converts the architecture into evidence-driven vertical slices. A milestone is complete only when its acceptance clips and tests work end to end. Contracts not required by the active milestone remain architectural direction, not reasons to delay a usable renderer.
 
+> **Phasing note.** This document owns milestone *scope* and *exit criteria*. `PLAN.md` owns the
+> order work is actually done in, and where the two disagree `PLAN.md` governs — see its
+> resolution 8, which moves desktop live preview, hot reload, warm restart and the debug overlay
+> out of M1 as listed below and into its phase 4. Of those four, warm restart and the live host
+> have since landed anyway; hot reload and the overlay have not. `docsref/DEVIATIONS.md` records
+> the conflict and `docsref/TECH-DEBT.md` D-6 records that the original argument for the deferral
+> cited a premise which has since been tested and found false.
+
 ## Roadmap principles
 
 1. **Prove the golden loop first.** Live preview, deterministic render, and vector export of the same polished 2D material are more valuable than broad subsystem coverage.

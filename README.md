@@ -48,10 +48,11 @@ The repository already includes:
 - CPU and headless-GPU Skia renderers;
 - deterministic PNG and FFmpeg video delivery;
 - HarfBuzz-based text shaping with pinned Latin Modern fonts;
-- external OpenGL texture interop for shader-backed scenes; and
+- external OpenGL texture interop for shader-backed scenes;
+- a desktop live host with window, GL context, event pump, letterboxing, hi-DPI mapping, warm restart, and input routing with camera-resolved hit testing; and
 - raster golden tests, lifecycle and determinism tests, architecture-boundary tests, and allocation benchmarks.
 
-Work still ahead includes the desktop live host, complete input routing and presentation support, masks and effect graphs, SVG/PDF export, full mathematics support, richer text, native scientific 3D, and the public packaging story. See the [roadmap](docsref/ROADMAP.md) and [construction plan](PLAN.md) for the current sequence.
+Work still ahead includes masks and effect graphs, SVG/PDF export, mathematics, richer text, a debug overlay and hot reload, presentation and authoring libraries, native scientific 3D, and the public packaging story. See the [roadmap](docsref/ROADMAP.md) and [construction plan](PLAN.md) for the current sequence, the [deviation register](docsref/DEVIATIONS.md) for every open design question, and [technical debt](docsref/TECH-DEBT.md) for the shortfalls that are nobody's feature.
 
 > [!IMPORTANT]
 > Most of the code is currently being written by agentic coding tools. You can disagree with me and find that distasteful, and I think that's okay. I'm not necessarily pro-AI. I made the decision to rely on AI for writing this project after it took me a couple months to construct a working prototype with a smaller scope. As a micro-electronics student about to graduate, I simply don't have the temporal and mental capacity to pursue this for several more years until it becomes mature enough to be useful.
@@ -80,8 +81,11 @@ Clone the repository, then restore, build, and test the solution:
 ```bash
 dotnet restore --locked-mode Najm.slnx
 dotnet build Najm.slnx -c Release --no-restore
-dotnet test Najm.slnx -c Release --no-build
+dotnet test --solution Najm.slnx -c Release --no-build
 ```
+
+`dotnet test` needs `--solution`: without it the Microsoft.Testing.Platform runner
+exits without running anything instead of failing visibly.
 
 Render the Orrery sample as PNG stills without requiring FFmpeg:
 
@@ -158,7 +162,8 @@ This example uses screen-space coordinates and exports the loaded state directly
 | `samples` | Authored visual productions used to test the real authoring experience |
 | `tests` | Contract, golden-image, native-integration, determinism, and allocation tests |
 | `benchmarks` | BenchmarkDotNet suites and recorded baselines |
-| `docsref` | The architectural reference, subsystem contracts, deviations, and roadmap |
+| `docsref` | The architectural reference, subsystem contracts, deviations, technical debt, and roadmap |
+| `AGENTS.md` | Working instructions for contributors and coding agents; `CLAUDE.md` points at it |
 
 ## Documentation
 

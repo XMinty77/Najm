@@ -14,6 +14,22 @@ something is hacky, awkward, or harder than it should be. Friction is the
 finding. A sample that quietly works around an engine gap has failed at its second
 job, so workarounds must be reported rather than absorbed.
 
+**`NOTES.md` is the deliverable, equally with the scene.** Every sample carries
+`samples/<name>/NOTES.md`, written *as the work happens* rather than tidied up at
+the end: findings recorded at the moment they are hit, numbered in the order they
+were hit, each saying what was expected, what happened, and what the author did
+instead. Status sections are updated in place; the findings list only grows.
+Severity is the author's own judgement, stated as such, and the maintainer
+re-judges. A sample delivered without its notes has returned half of what it was
+for, and it is the half that cannot be reconstructed afterwards.
+
+This is also how a sample built by someone else reaches the engine: the notes
+file is the shareable artifact, readable without the diff and without the
+authoring session.
+
+`samples/Najm.Samples.Fractal/NOTES.md` and `samples/Najm.Samples.Pendulum/NOTES.md`
+are the format to copy.
+
 **Shared utility requested:** a **Catmull-Rom** spline helper, so graphed curves
 read smoothly and antialias natively through Skia rather than as visible polylines.
 Most of these need graphing; it should exist before the graphing-heavy ones start.
@@ -106,10 +122,15 @@ llvmpipe, no hardware needed.
 |---|---|---|
 | 3 | Orrery | **Built.** `samples/Najm.Samples.Orrery/` |
 | 1 | Double pendulum | **Built.** `samples/Najm.Samples.Pendulum/` |
-| 6 | Mandelbrot / Julia | **In progress.** `samples/Najm.Samples.Fractal/` |
-| 4 | Sine construction | **Unblocked.** |
-| 2 | Spring–mass–gravity | **Unblocked.** |
-| 5 | Fourier wrapping | **Unblocked.** |
+| 6 | Mandelbrot / Julia | **Built.** `samples/Najm.Samples.Fractal/` — the GL seam works end to end and is composited byte-identically to a direct readback. Its own checklist still shows palette iteration and the final 1080p60 encode as unticked. |
+| 4 | Sine construction | **Unblocked, unstarted.** |
+| 2 | Spring–mass–gravity | **Unblocked, unstarted.** Carries the `Dynamic` text-layout case. |
+| 5 | Fourier wrapping | **Unblocked, unstarted.** The most stateful of the set. |
+
+The three unstarted scenes are independent of each other and of the engine's
+remaining work, so they can be authored in parallel by separate agents. Each owns
+only its own directory under `samples/`; the one shared edit is a line in
+`Najm.slnx`, which must be serialized between them.
 
 Everything the first three needed has landed: Catmull-Rom splines, node-tier
 opacity and clip, the minimal scheduler, Tier-2 drawing conveniences, gradient

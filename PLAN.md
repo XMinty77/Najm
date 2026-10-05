@@ -1,7 +1,7 @@
 # Najm Construction Plan
 
 **Status:** Living implementation plan  
-**Last updated:** 2026-08-11  
+**Last updated:** 2026-10-05  
 **Source of truth:** `docsref/BRIEF.md`, `docsref/ARCHITECTURE.md`,
 `docsref/NAJM-COMPOSITOR.md`, `docsref/NAJM-SKIA.md`,
 `docsref/NAJM-TEXT.md`, and `docsref/ROADMAP.md`.
@@ -9,6 +9,13 @@
 This plan turns the architecture into vertical implementation slices. The
 architecture documents own semantics; this document owns execution order,
 acceptance gates, delegation, and current scope.
+
+**Where facts live.** This document summarizes and sequences; it does not restate.
+What has landed is `git log`. Why the code departs from the reference set is
+`docsref/DEVIATIONS.md`, including every open question. Shortfalls that are
+nobody's feature are `docsref/TECH-DEBT.md`. When this document and one of those
+registers disagree, the register is right — see TECH-DEBT D-5 for why that rule
+exists.
 
 ## Product priorities
 
@@ -20,14 +27,24 @@ offline output, and live interaction.
 
 The first productions that guide implementation are:
 
-1. An interactive hydrogen-atom presentation, with an existing GLSL ES
-   renderer embedded beneath crisp Najm-authored presentation graphics.
-2. A sorting-algorithm animation with reusable, deterministic choreography.
-3. An orbital identity clip and a publication-quality vector figure that prove
+1. A sorting-algorithm animation with reusable, deterministic choreography.
+2. An orbital identity clip and a publication-quality vector figure that prove
    raster and vector delivery from the same scene model.
+3. An interactive presentation over an externally rendered GLSL ES scene,
+   composited beneath crisp Najm-authored graphics.
 
-2D is the priority. The existing hydrogen renderer will be integrated through
-the external GL-texture seam before Najm's native scientific 3D milestone.
+2D is the priority. External GLSL ES renderers are integrated through the
+external GL-texture seam rather than ported to SkSL, and that happens well
+before Najm's native scientific 3D milestone.
+
+**Schedule change, 2026-10-05.** The hydrogen-atom presentation that previously
+sat first on this list and carried a September date has been cancelled. It
+remains a real intended production and the sequencing consequence is only that
+nothing jumps the queue on its behalf: the work it pulled forward — the GPU
+surface provider, external-texture interop, the desktop host, input routing — has
+all landed and is retained. The remaining near-term deliverable is the sorting
+animation, which is `ROADMAP.md`'s M1 acceptance production #2, so completing M1
+and shipping the deliverable are now the same programme.
 
 ## Delivery principles
 
@@ -53,36 +70,59 @@ the external GL-texture seam before Najm's native scientific 3D milestone.
   and resolved dependencies, native Skia and HarfBuzz checks, raw-pixel raster
   goldens, and a recorded allocation/surface-memory benchmark baseline in
   `benchmarks/M0-BASELINE.md`.
-- **Phase 2 in progress:** fixed/live timing, the detached 2D tree/logical
-  transform foundation, engine-controlled scene lifecycle, layers/behaviors,
-  identity registration, projected FIFO deferred mutation, and allocation-free
-  Update traversal are implemented. The portable drawing surface now includes
-  paths, affine images, clips, transforms, true group opacity, tagged clear,
-  and the portable blend subset through the CPU Skia backend.
+- **Phase 2 nearly complete.** The runtime, drawing, composition, motion and
+  raster-delivery slices are all in: timing policies, the 2D tree and logical
+  transforms, engine-controlled lifecycle, layers and behaviors, identity
+  registration, FIFO deferred mutation, allocation-free Update traversal; the
+  portable drawing surface through paths, strokes, gradients, affine images,
+  clips, transforms, group opacity, tagged clear and the portable blend subset;
+  the node render seam and the split per-node/subtree bounds; `Camera2D`,
+  `WorldLayer2D` and layer presentation; the shared traverser, the ordinary-layer
+  compositor and the direct path, with every direct-path frame asserted
+  byte-identical to the composited frame of the same scene; node-tier `Opacity`,
+  `Blend`, `Clip` and `Isolate`; the minimal scheduler, waits and tweens; and
+  offline delivery — frame sinks, the deterministic fixed-step renderer, PNG
+  stills and sequences, the ffmpeg pipe, and the frame-diagnostics family.
 
-  Since landed: gradients through a value-keyed `Brush` and full stroke
-  geometry; the node render seam (`Render`, `Drawable`, `ZIndex`, bounds); the
-  portable engine-transform seam; `Camera2D`, `WorldLayer2D`, and layer
-  presentation state; the shared render traverser; the ordinary-layer
-  compositor with FP-1 and its equivalence test; `SceneEnvironment`, which made
-  every render composite; and offline delivery — frame sinks, the deterministic
-  fixed-step renderer, and PNG stills.
+  **Remaining in phase 2, and it is the critical path to M1:**
 
-  Remaining in phase 2: the minimal scheduler and tweens, node-tier composition
-  (§6.7 — `Opacity`, `Blend`, `Clip` are M1 scope per ROADMAP and absent), a
-  small effect path for glow and drop shadow, SVG/PDF writers over the direct
-  path, and the vector structural check.
+  1. A small effect path for glow and drop shadow. Blocked on a public-contract
+     decision: the direct-path bracket predicate for an effect-only subtree is an
+     unresolved documentation conflict (`DEVIATIONS.md`, final section).
+  2. SVG/PDF writers over the direct path, and the vector structural check.
+     Deviation 11 prepared the ground — the direct path now carries per-layer
+     clear, opacity, blend and viewport — but `VectorPolicy` is referred to as the
+     ordinary escape hatch and the type does not exist yet.
 
-  Known defects found by audit and not yet fixed, tracked in
-  `docsref/DEVIATIONS.md`: the direct path drops layer presentation (entry 11);
-  descriptor caches never trim; `VisualBounds` is node-only where the spec
-  defines it as node-plus-descendants; mismatched-aspect output anchors
-  top-left instead of centring.
-- **Phase 3 foundation landed early:** pinned Latin Modern Roman/Math assets,
-  provenance/licenses, and the internal HarfBuzz ownership/shaping path are in
-  place, with explicit native lifetime, thread-affinity, pool reset/reuse, and
-  RTL-cluster coverage. Public text layout and math-picture contracts remain
-  sequenced after their Core geometry/rendering prerequisites.
+  The four audit defects this section previously tracked as unfixed — the direct
+  path dropping layer presentation, unbounded descriptor caches, node-only
+  `VisualBounds`, and top-left anchoring on mismatched aspect — are **all
+  closed**. See `DEVIATIONS.md` entry 11 and commits `448fb7c` and `4d38f16`.
+- **Phase 3 baseline text landed; math has not started.** Pinned Latin Modern
+  Roman/Math assets with provenance and licenses, the internal HarfBuzz
+  ownership/shaping path with explicit native lifetime, thread affinity, pool
+  reset/reuse and RTL-cluster coverage, the public layout contracts, the layout
+  cache, and `TextNode` in `Najm.Lib` with `DrawText` as a Tier-1 op are all in.
+  Two deliberate absences are recorded as deviations: no automatic line wrapping
+  (`MaxWidth` refuses rather than being ignored — entry 14) and no rich text, so
+  mixed styling means several nodes sharing a baseline (entry 13).
+
+  Remaining in phase 3: Fast math and `TexNode`, plus invariant-culture numeric
+  readouts. The CSharpMath compatibility spike has been executed and written up in
+  full in `DEVIATIONS.md` — the portable `ICanvas` route is proven, glyph identity
+  through the bundled face holds exactly, and no SkiaSharp assembly loads — so the
+  route is settled. Deviation 8 is the open question in front of it, and it is a
+  posture question about silent LaTeX repair and font-fallback determinism rather
+  than a technical one.
+
+- **Phase 4 desktop host landed ahead of its sequence.** `Najm.Host.Desktop`
+  ships the window, GL context, event pump, letterboxing with hi-DPI mapping, bar
+  clearing, pinned disposal order, `WrapBackbuffer`, F5 warm restart, and full
+  input routing with camera-resolved hit testing. It is end-to-end tested on this
+  machine under Xvfb against frames captured from the X server. Still absent from
+  phase 4: the debug overlay (`F1` is reserved and deliberately swallowed) and
+  method-body hot reload. Two host decisions are open for the owner — deviations
+  36 and 37.
 
 ## Approved scope: phases 1 through 3
 
@@ -226,24 +266,39 @@ implementing them.
 - CPU-raster tests remain authoritative; hidden-window software-GL smoke tests
   are isolated from deterministic golden tests.
 
-### Phase 5 — Hydrogen-priority interaction slice
+### Phase 5 — External-renderer interaction slice
 
-- Audit and extract the reusable renderer boundary from the existing hydrogen
-  C#/Silk.NET host.
-- Render hydrogen into a same-context GL texture and wrap it through Najm's
-  external-texture `IImage` seam.
-- Compose crisp Najm text, equations, controls, and chapter graphics above it.
-- Pull forward only the required M2 input mechanisms: input blocks, camera- and
-  pinning-resolved routing, capture/focus, dragging, keyboard controls, sliders,
-  and signal-driven stepping.
-- Build presentation helpers in `Najm.Guard` against public Core/Lib APIs.
+Most of this phase was executed early, under the cancelled presentation's
+deadline, and the parts that landed are retained. The external GL-texture seam is
+built and proven: the Mandelbrot sample composites a GLSL ES 3.00 shader through
+it, and an independent consumer measured Najm's composite of a wrapped texture as
+byte-identical to a direct GL readback. The M2 input mechanisms this phase was to
+pull forward — input blocks, camera- and pinning-resolved routing, capture/focus,
+dragging, keyboard control — are implemented and routed through the desktop host.
+
+What remains, no longer on a deadline:
+
+- Presentation helpers — chapter graphics, controls, sliders, signal-driven
+  stepping — built in an opinionated library against public Core/Lib APIs. See
+  TECH-DEBT D-4: `Najm.Lib` is one file, and the taste/correctness split in
+  `DESIGN-LANGUAGE.md` governs what may be promoted into the engine.
+- The hydrogen renderer boundary specifically. The analysis is done and recorded:
+  the one architectural collision is render idempotence, since five of its
+  features flip ping-pong buffers inside the draw call, and the fix is to hoist
+  that history into scene state advanced at a fixed step in `Update`. Everything
+  pedagogically load-bearing in that renderer is already pure and single-draw.
+  `~/hydrogen-presentation` pins an older commit of this repository on purpose, so
+  its findings describe one fixed floor; adopting any of them means repinning
+  first.
 
 ### Phase 6 — Production acceptance and hardening
 
 - Orbital identity clip.
-- Deterministic sorting visualization.
+- Deterministic sorting visualization. **The live near-term deliverable** — it is
+  ROADMAP M1 acceptance production #2, so it is the production that now measures
+  M1 rather than a later hardening exercise.
 - Publication-quality hybrid/vector figure.
-- Interactive hydrogen presentation slice.
+- An interactive presentation slice over an external renderer.
 - Use these productions to pull masks, backdrops, richer effects, capture,
   embedded scenes, advanced text, and later native/vector 3D into scope only
   when concrete requirements justify them.
@@ -278,6 +333,26 @@ are changed by one owner at a time. No subagent result is treated as integrated
 until the primary agent inspects the diff and reruns the relevant solution-wide
 checks.
 
+**Working instructions for any agent, from any tool, live in `AGENTS.md`**, which
+`CLAUDE.md` points at so the two cannot drift. It carries the verification
+commands, the documentation map, the register disciplines, the engine contracts
+that are easy to break, this machine's GL and Xvfb specifics, and the commit and
+prose conventions.
+
+**More than one contributor, 2026-10-05.** Work is now also being delegated outside
+this machine. Two consequences for the model above:
+
+- `docsref/DEVIATIONS.md` is append-mostly and sequentially numbered, so a
+  contributor claims a number block before writing rather than racing for the next
+  integer. The shared files named above — `Najm.slnx`, `Directory.Build.props`,
+  `Directory.Packages.props`, `global.json` — stay serialized, and a new dependency
+  remains the primary agent's decision rather than an implementation detail.
+- An outside agent's findings are only worth what reaches the engine, so bounded
+  work that explores the authoring experience must produce a written artifact —
+  a sample's `NOTES.md`, or a deviation entry — as part of its definition of done.
+  A result delivered as a diff alone has lost the half of its value that is hardest
+  to recover.
+
 ## Specification resolutions
 
 The following resolve gaps found during the planning review unless later
@@ -309,14 +384,43 @@ architecture edits supersede them:
    productions to PNG and inspecting them, and `SkiaExport.Png` is part of the
    working loop rather than a delivery convenience.
 
+   **Amended 2026-10-05.** This resolution also argued the deferral from the claim
+   that development runs where "a windowed host cannot run at all". That claim was
+   tested and is false — the host runs under Xvfb and is asserted against captured
+   X-server frames — and the desktop host has since landed anyway. The phasing of
+   the two items still outstanding, hot reload and the debug overlay, therefore
+   rests on an argument that no longer holds and should be re-made from scope and
+   risk; TECH-DEBT D-6 carries that question. The honest remaining constraint is
+   narrower: Xvfb cannot exercise vsync, frame pacing, tearing, focus policy,
+   resize-by-dragging, fullscreen or hi-DPI, and llvmpipe timings predict nothing
+   about a stage machine. PNG remains the primary acceptance medium, but it is no
+   longer the only one available.
+
 ## Current execution order
 
-1. Repository/test spine.
-2. Skia/Silk executable binding spike.
-3. HarfBuzz/CSharpMath executable compatibility spike.
-4. M0 portable contracts and first raw-pixel golden.
-5. Headless scene/runtime slice.
-6. Ordinary compositor and offline/vector delivery.
-7. Minimal scheduler/tween slice and sorting acceptance fixture.
-8. Baseline text, Fast math, and numeric readouts.
-9. Phase 1–3 integration review and acceptance report.
+Items 1 through 7 are complete. The spine, both binding spikes, the M0 contracts
+and first golden, the headless runtime slice, the compositor and raster delivery,
+and the scheduler/tween slice have all landed, along with baseline text and — out
+of sequence, under the cancelled deadline — the GPU provider, the external-texture
+seam and the desktop host.
+
+What is next, in order:
+
+1. **Continuous integration** (TECH-DEBT D-1). Not a feature, and it goes first
+   because every item below it is cheaper to review once a green check exists, and
+   because the project's six real invariants are currently defended by memory.
+2. **The remaining three sample scenes** — spring–mass–gravity, sine-wave
+   construction, Fourier wrapping (`SAMPLES.md` §2, §4, §5). Parallelizable, one
+   author each, and the programme that has produced every authoring finding so far.
+   Each must leave a `NOTES.md`; that artifact is the deliverable.
+3. **The effect path** — glow and drop shadow. Decide the direct-path bracket
+   predicate for effect-only subtrees first.
+4. **SVG/PDF writers and the vector structural check.** Name `VectorPolicy` first.
+   This closes phase 2.
+5. **Fast math and `TexNode`**, then numeric readouts. Answer deviation 8 first.
+6. **The zero-allocation assertion** (TECH-DEBT D-3) and the debug overlay, which
+   together make the M1 exit criteria checkable rather than asserted.
+7. **M1 acceptance:** the sorting visualization, the orbital identity clip, and the
+   publication figure, rendered at draft, 1080p and 4K, with identical replay
+   hashes and a passing vector structural check.
+8. Phase 1–3 integration review and acceptance report.
