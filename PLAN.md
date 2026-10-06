@@ -84,15 +84,19 @@ and shipping the deliverable are now the same programme.
   offline delivery — frame sinks, the deterministic fixed-step renderer, PNG
   stills and sequences, the ffmpeg pipe, and the frame-diagnostics family.
 
-  **Remaining in phase 2, and it is the critical path to M1:**
+  **Remaining in phase 2, and it is the critical path to M1. Both were blocked on
+  a decision; both were unblocked on 2026-10-06 and are ready to build:**
 
-  1. A small effect path for glow and drop shadow. Blocked on a public-contract
-     decision: the direct-path bracket predicate for an effect-only subtree is an
-     unresolved documentation conflict (`DEVIATIONS.md`, final section).
+  1. A small effect path for glow and drop shadow. The direct-path bracket
+     predicate for an effect-only subtree is resolved: the direct path and the
+     node-tier predicate are **one predicate**, §6.7's list governs, and the
+     existing direct-versus-composited byte-identity assertion extends to cover
+     effect-bearing scenes (`DEVIATIONS.md`, documentation conflicts).
   2. SVG/PDF writers over the direct path, and the vector structural check.
      Deviation 11 prepared the ground — the direct path now carries per-layer
-     clear, opacity, blend and viewport — but `VectorPolicy` is referred to as the
-     ordinary escape hatch and the type does not exist yet.
+     clear, opacity, blend and viewport. `VectorPolicy` is now declared in
+     deviation 38: a scene-level `{ Refuse, Raster }` enum defaulting to `Refuse`,
+     where `Raster` still reports every unit it rasterized.
 
   The four audit defects this section previously tracked as unfixed — the direct
   path dropping layer presentation, unbounded descriptor caches, node-only
@@ -111,9 +115,24 @@ and shipping the deliverable are now the same programme.
   readouts. The CSharpMath compatibility spike has been executed and written up in
   full in `DEVIATIONS.md` — the portable `ICanvas` route is proven, glyph identity
   through the bundled face holds exactly, and no SkiaSharp assembly loads — so the
-  route is settled. Deviation 8 is the open question in front of it, and it is a
-  posture question about silent LaTeX repair and font-fallback determinism rather
-  than a technical one.
+  route is settled and nothing about it is waiting on a decision.
+
+  Deviation 8 is not a question but a pair of implementation obligations, both
+  found by running the spike and both producing output that renders and looks
+  approximately right while being measurably wrong: CFF glyph bounds must be primed
+  per face at load with `UpdateAllCffGlyphBounds()`, and the Y flip is Najm's to
+  own and must compose with — not duplicate — the node-level upright flip
+  `TextNode` already applies. Read that entry before writing the adapter.
+
+  Resolved 2026-10-06: **Najm adds no LaTeX validation pass.** CSharpMath's parser
+  is lenient and silently repairs some malformed input; II.6's "errors fail loud"
+  is read as "surface CSharpMath's errors faithfully", and a second partial LaTeX
+  grammar inside Najm is explicitly not wanted.
+
+  Scope for the first slice, per resolution 7: equations are **atomic** — one
+  recorded `VectorPicture` per formula, portable and vector-exportable. II.6's
+  structured walk, atom decomposition and math fragments are a later slice, and
+  CS-R2/R3/R4/R5 are the checks that gate it.
 
 - **Phase 4 desktop host landed ahead of its sequence.** `Najm.Host.Desktop`
   ships the window, GL context, event pump, letterboxing with hi-DPI mapping, bar
@@ -413,14 +432,29 @@ What is next, in order:
    construction, Fourier wrapping (`SAMPLES.md` §2, §4, §5). Parallelizable, one
    author each, and the programme that has produced every authoring finding so far.
    Each must leave a `NOTES.md`; that artifact is the deliverable.
-3. **The effect path** — glow and drop shadow. Decide the direct-path bracket
-   predicate for effect-only subtrees first.
-4. **SVG/PDF writers and the vector structural check.** Name `VectorPolicy` first.
+3. **The effect path** — glow and drop shadow. Unblocked; the predicate is one
+   predicate.
+4. **Fast math and `TexNode`, atomic flavor**, then invariant-culture numeric
+   readouts. Unblocked; read deviation 8 first. This needs a portable
+   `VectorPicture` in Core, which nothing declares yet and which the dvisvgm tier
+   (Part IV) and II.6's fallback both also consume — so its shape is a Core
+   contract decision, not an implementation detail of the adapter.
+5. **SVG/PDF writers and the vector structural check.** Unblocked; `VectorPolicy`
+   is deviation 38. Sequenced after math deliberately, so the writers are built
+   against real outlined glyphs and rules rather than having text and math retro-fitted.
    This closes phase 2.
-5. **Fast math and `TexNode`**, then numeric readouts. Answer deviation 8 first.
-6. **The zero-allocation assertion** (TECH-DEBT D-3) and the debug overlay, which
-   together make the M1 exit criteria checkable rather than asserted.
-7. **M1 acceptance:** the sorting visualization, the orbital identity clip, and the
+6. **The zero-allocation assertion** (TECH-DEBT D-3), **continuous integration's
+   second pass** over the GL and host jobs, and **the debug overlay** — together
+   these make the M1 exit criteria checkable rather than merely asserted.
+7. **`RequestClose()` and `HostOptions.QuitKey`** (deviation 36), which an
+   automated end-to-end host run needs in order to stop politely.
+8. **M1 acceptance:** the sorting visualization, the orbital identity clip, and the
    publication figure, rendered at draft, 1080p and 4K, with identical replay
    hashes and a passing vector structural check.
-8. Phase 1–3 integration review and acceptance report.
+9. Phase 1–3 integration review and acceptance report.
+
+Then M2, whose input half is already paid for — the router, camera-resolved hit
+testing, capture/focus and dragging all landed with the desktop host. What M2 still
+wants is masks and tight isolation bounds, staged accumulation, bulk primitives and
+element picking, live capture over the existing `PixelFrameLease`, and the
+composition diagnostics. `ROADMAP.md` owns that scope.

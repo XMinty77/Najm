@@ -30,7 +30,7 @@ set disagreeing with itself rather than the implementation departing from it.
 | 5 | No portable seam for installing render scale and the base transform | Implemented |
 | 6 | Exception types for "fail loud" | Implemented |
 | 7 | `Camera2D.FitRect` takes the virtual resolution | Implemented |
-| 8 | Fast math preconditions the reference does not state | **Open** |
+| 8 | Fast math preconditions the reference does not state | **Obligations** |
 | 9 | `IImage` admits externally owned, draw-stable images | Implemented |
 | 10 | `Scene.Render` currently has two semantics | Superseded |
 | 11 | `RenderDirect` drops layer presentation | Implemented |
@@ -58,19 +58,23 @@ set disagreeing with itself rather than the implementation departing from it.
 | 33 | Letterbox bars are cleared after the render, not before it | Implemented |
 | 34 | `DesktopHost` and `HostOptions` — the host §4.6 writes calls to and never declares | Implemented |
 | 35 | Window space is logical; the framebuffer is physical | Implemented |
-| 36 | Nothing ends a live run except the window closing | **Open** |
-| 37 | The far edge of the content rect is a partially covered pixel | **Open** |
+| 36 | Nothing ends a live run except the window closing | **Decided, unbuilt** |
+| 37 | The far edge of the content rect is a partially covered pixel | **Owner, deferred** |
+| 38 | `VectorPolicy` — the escape hatch the reference uses and never declares | **Decided, unbuilt** |
 
-**Open and waiting on a decision:** 8 (Fast math preconditions), 36 (how a live run ends),
-37 (the partially covered content edge). Entry 12 is *Recorded retroactively*, which the entry
+**Nothing is waiting on a decision.** As of 2026-10-06 the three entries that were open
+questions have all been answered: 36 (how a live run ends) is decided and unbuilt, 8 (Fast math
+preconditions) carries two implementation obligations rather than a question, and 37 (the
+partially covered content edge) is deliberately deferred by the owner and blocks nothing. Entry
+38 (`VectorPolicy`) is decided and unbuilt. Entry 12 is *Recorded retroactively*, which the entry
 itself names as the defect.
 
 **Documentation conflicts**, at the end of this file: fast-path numbering (resolved), easing
 names (resolved), M1 scope ROADMAP vs. PLAN (resolved, and its stated reason has since been
-falsified), `Najm.Text`'s CSharpMath dependency (resolved by executing the spike), what
-"polling sees unconsumed input only" means for level snapshots (**unresolved — a defensible
-reading, not a decision**), and the direct-path bracket predicate for an effect-only subtree
-(**unresolved, and it blocks the effect path**).
+falsified — see `TECH-DEBT.md` D-6), `Najm.Text`'s CSharpMath dependency (resolved by executing
+the spike), what "polling sees unconsumed input only" means for level snapshots (**ratified
+2026-10-06**), and the direct-path bracket predicate for an effect-only subtree (**resolved
+2026-10-06: the two predicates are one predicate**).
 
 ---
 ## 1. `Scene` has no per-tick hook
@@ -314,8 +318,30 @@ node placing a `VectorPicture` must reach the same reading frame `TextNode` does
 rather than inventing a second convention. Two flips of the same sign silently
 double; two of opposite sign silently cancel. Both render.
 
-**Status:** Open — recorded before Fast math is built, so neither is
-rediscovered by debugging wrong output.
+**Najm does not validate LaTeX. Decided by the owner, 2026-10-06.** The
+CSharpMath spike found the parser lenient: `\frac{a}` parses as `\frac{a}{}` and
+returns a null error, so II.6's "errors fail loud with CSharpMath's message and
+the item's source position" is available for what CSharpMath rejects and not for
+what it silently repairs. Najm adds **no** validation pass of its own. A
+malformed formula that CSharpMath accepts renders as CSharpMath renders it.
+
+This is a deliberate narrowing of the fail-loud principle, not an oversight, and
+the reasoning is ownership: a validation pass in Najm would be a second, partial
+LaTeX grammar maintained against the first, and every divergence between them
+would be a formula that one accepts and the other refuses. Authors write LaTeX
+they can see rendered, so a silently repaired formula is visible in the output in
+a way that a silently wrong metric (above) is not. Fail-loud continues to govern
+everything Najm itself can check — a missing toolchain, a Full item outside load,
+an unsound font bridge, a failed extraction check.
+
+Implementers: do not add a validation pass "to satisfy fail-loud". II.6's
+sentence should be read as "surface CSharpMath's errors faithfully", which is
+what it can mean.
+
+**Status:** Open — recorded before Fast math is built, so none of this is
+rediscovered by debugging wrong output. The two preconditions above are
+implementation obligations rather than open questions; they close when Fast math
+lands.
 
 ---
 
@@ -1696,7 +1722,25 @@ end. It costs an automated end-to-end run the ability to stop the host politely;
 verification harness sends the close message through Xlib instead, which is what a close button
 does anyway and is therefore arguably the more faithful test.
 
-**Status:** Open — question for the owner.
+**Resolved by the owner, 2026-10-06.** `DesktopHost.RequestClose()` is the primitive, and
+`HostOptions.QuitKey` is a binding over it, defaulting to `Key.Unknown` so that no key is
+reserved unless a program asks for one.
+
+The reason this shape and not the other three: the host already owns the window, the event pump
+and the loop condition, so it is the only participant that *can* end a run — making the
+mechanism a host method states the ownership the other shapes would blur. A scene hook would
+give every scene a vote on the lifetime of a host it does not own; a `CancellationToken` on
+`Run` would import a threading idiom into a loop that is single-threaded by design (§4.7) and
+would imply the host can be stopped from another thread, which it cannot. A quit key alone would
+leave a program with no way to end a run it started.
+
+`QuitKey` defaults to disabled rather than to `Escape` because §9.1's reservation rule means a
+default-on quit key silently takes a key from every scene, and `Escape` is exactly the key an
+interactive presentation is most likely to want. Entry 34's reasoning for reserving `OverlayKey`
+does not transfer: there, reserving early made a future contract stable; here, there is nothing
+future to stabilize, because `RequestClose()` is the contract and the key is only a convenience.
+
+**Status:** Open — decided, not yet implemented.
 
 ---
 
@@ -1736,7 +1780,58 @@ give up, which makes the choice the owner's:
 3. **Make `ResolveContentRect` round to nearest instead of outward** — an engine change that
    moves the fringe rather than removing it, and touches offline output too.
 
-**Status:** Open — question for the owner.
+**Deferred by the owner, 2026-10-06**, pending a better technical footing for choosing between
+the three. Confirmed not to block anything: the fringe is visible only on an opaque presentation
+surface, so it affects windowed output alone. No test asserts the content edge, offline delivery
+is unaffected because a partially transparent edge pixel there is unremarkable, and none of the
+three fixes forecloses the others — options 1 and 2 are host-local, and option 3 is reversible.
+The cost of waiting is cosmetic and bounded: a dark hairline along one edge of a live window,
+worst at window sizes where the fractional coverage is small.
+
+**Status:** Open — question for the owner, deferred.
+
+---
+
+## 38. `VectorPolicy` — the escape hatch the reference uses and never declares
+
+**Docs:** `ARCHITECTURE.md` §1.1 has dense content embed "as raster inside vector output under
+explicit author control (§7.6)", and §7.6 describes that control. `SAMPLES.md` names
+`VectorPolicy.Raster` as "the ordinary escape hatch, not a failure mode". `PLAN.md`'s phase 2
+requires that "unsupported constructs fail loudly until their correct raster-embed fallback
+lands". No signature for the type appears anywhere, and nothing in `src` declares it.
+
+**Decision, 2026-10-06:** a two-member enum, defaulting to the strict member.
+
+```csharp
+public enum VectorPolicy
+{
+    Refuse = 0,   // a construct with no vector realization fails loud at export
+    Raster,       // the same construct is embedded as raster, and the export reports it
+}
+```
+
+It is a **scene-level** property, read by the vector writers at export time, and it is not a
+per-node or per-layer setting in this slice.
+
+**Why `Refuse` is the default.** Fail-loud is a stated engine principle, and the thing being
+guarded against is specific and already documented: an author exports a figure for a paper,
+something in it quietly rasterizes, and the defect is discovered at print resolution. The
+`Raster` member exists because `SAMPLES.md` records that complex compositions *will* be
+rasterized deliberately — publication figures there are plots and simple diagrams — so refusing
+is the right default and rasterizing must remain one property away rather than a rewrite.
+
+**Why scene-level and not per-node.** A per-node policy is the more expressive design and is
+deliberately deferred: nothing has asked for it, and `ROADMAP.md`'s promotion rule wants two
+independent authoring examples before an abstraction widens. The scene-level form is also a
+subset of the per-node form, so adopting the latter later does not invalidate scenes written
+against this one.
+
+**What `Raster` must still do loudly.** It is not a silent mode. An export that rasterizes any
+unit reports which units rasterized and why, through the structural check that phase 2 requires
+anyway — `SAMPLES.md` calls `Plus` blending and other raster-only constructs "expected rather
+than a defect", and expected is not the same as unreported.
+
+**Status:** Open — decided, not yet implemented. The vector writers are the first consumer.
 
 ---
 
@@ -1861,11 +1956,37 @@ held state — was rejected because the held state has no single owning event
 gone) and because a node consuming a press in order to *start* a drag would then
 be hiding exactly the state that says the drag is still happening.
 
-Unresolved: the reading is defensible but it is a reading.
+**Ratified by the owner, 2026-10-06.** The reading above is now the specified behaviour, not an
+interpretation awaiting review: edge queries (`WasPressed`, `WasReleased`, `Scroll`, `Text`)
+filter by consumption; level queries (`PointerPosition`, `Buttons`, `IsDown`) do not. The
+rejected alternative and the reason for rejecting it stand as the rationale. `ARCHITECTURE.md`
+§9.1's two sentences should be read as describing these two query families rather than as one
+rule about all polling.
 
 ### Direct-path bracket predicate
 
 The direct-path layer bracket triggers on "non-default blend or a backdrop"
 (§5.3), while the node-tier isolation predicate also includes mask, effect,
 opacity below one, and `Isolate` (§6.7). The docs do not say what the direct
-path does with a layer whose subtree carries only effects. Unresolved.
+path does with a layer whose subtree carries only effects.
+
+**Resolved by the owner, 2026-10-06: the two predicates are one predicate.** The
+direct path opens its per-layer bracket under exactly the conditions §6.7 lists —
+non-default blend, backdrop, mask, effect, opacity below one, or `Isolate` — and
+§5.3's shorter list is read as an incomplete enumeration rather than a narrower
+rule.
+
+The reason is entry 11, which is the record of what the alternative costs. The
+shared traverser exists precisely so the two paths cannot drift; they drifted
+anyway *inside that type*; and the drift stayed invisible until a byte-identity
+assertion was written. A predicate that differs between the paths by one clause is
+that same defect pre-authorized: a subtree carrying only an effect would isolate
+on one path and composite against the frame on the other, both would render, and
+the direct path is `VectorExporter`'s only route — so the discrepancy would first
+surface as silently wrong exported output, which is the failure mode entry 11
+warned about in those words.
+
+Consequence for the effect path when it lands: the predicate is one function with
+one caller per path, and the existing direct-versus-composited byte-identity
+assertion extends to cover effect-bearing scenes. FP-5, the reference's
+direct-path bracket skip, stays unimplemented for the reason entry 11 gives.
