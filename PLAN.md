@@ -134,6 +134,35 @@ and shipping the deliverable are now the same programme.
   structured walk, atom decomposition and math fragments are a later slice, and
   CS-R2/R3/R4/R5 are the checks that gate it.
 
+  **The dvisvgm tier is a separate slice, and it is promoted out of deferral.**
+  `NAJM-TEXT.md` Part IV specifies the Full flavor completely — `DviSvgmTypesetter`
+  as a decorator over any `ITypesetter`, the per-item `latex` → DVI → `dvisvgm
+  --no-fonts` pipeline, baseline from the preview package's depth reporting, the
+  `(contentHash, preambleHash, distroStamp)` disk cache, load-phase confinement,
+  and a failure table with no silent blank boxes. `ROADMAP.md` places it in M5 and
+  the deferral list calls it "external dvisvgm math"; the owner has named it as the
+  thing that makes TeX support complete, which is `ROADMAP.md`'s first promotion
+  condition.
+
+  It stays a **separate** slice rather than being folded into Fast math, for three
+  reasons. It is a decorator, so it is additively composable by construction and
+  touches no part of the Fast path. Its output is a `VectorPicture`, which Fast
+  math has to create first, so sequencing it second makes it substantially cheaper.
+  And it is the only slice in the plan with an external-toolchain dependency, which
+  means a different CI story and a different failure surface from everything around
+  it.
+
+  Fast and Full are not redundant: Fast is in-process and available at frame time;
+  Full resolves during load, costs a process launch on a cache miss, and carries an
+  explicit limitation of no sub-math fragments. Part IV's own confinement rule
+  exists because of that difference.
+
+  **Environment prerequisite.** Neither `latex` nor `dvisvgm` is installed on the
+  development VPS, and the distro-stamp half of the cache key is only meaningful
+  against a pinned toolchain. Whoever takes this slice needs a box with TeX, and
+  the acceptance tests need the toolchain in CI — including the cache-hit test that
+  asserts a warm build launches no process at all.
+
 - **Phase 4 desktop host landed ahead of its sequence.** `Najm.Host.Desktop`
   ships the window, GL context, event pump, letterboxing with hi-DPI mapping, bar
   clearing, pinned disposal order, `WrapBackbuffer`, F5 warm restart, and full
@@ -425,9 +454,19 @@ seam and the desktop host.
 
 What is next, in order:
 
+0. **The faithfulness audit**, running alongside everything below rather than after
+   it. A systematic review of the implementation against the reference set, one
+   subsystem at a time, checking that the code does what the documents say and that
+   what it does is sound. It is listed at zero because **its value decays as the
+   surface grows**: the public API is unstable today and breaking changes are free,
+   and both of those stop being true at the first published package. The register's
+   38 entries prove the discipline works when a decision is made consciously; the
+   audit looks for the places where one was made by accident. Scope and rules are
+   below under *The faithfulness audit*.
 1. **Continuous integration** (TECH-DEBT D-1). Not a feature, and it goes first
-   because every item below it is cheaper to review once a green check exists, and
-   because the project's six real invariants are currently defended by memory.
+   among the build items because every one below it is cheaper to review once a
+   green check exists, and because the project's six real invariants are currently
+   defended by memory.
 2. **The remaining three sample scenes** — spring–mass–gravity, sine-wave
    construction, Fourier wrapping (`SAMPLES.md` §2, §4, §5). Parallelizable, one
    author each, and the programme that has produced every authoring finding so far.
@@ -453,8 +492,84 @@ What is next, in order:
    hashes and a passing vector structural check.
 9. Phase 1–3 integration review and acceptance report.
 
+Between 5 and 8, once Fast math exists: **the dvisvgm Full-math tier**, promoted
+out of deferral per the phase 3 note above. It needs a box with a TeX toolchain,
+which the development VPS is not.
+
 Then M2, whose input half is already paid for — the router, camera-resolved hit
 testing, capture/focus and dragging all landed with the desktop host. What M2 still
 wants is masks and tight isolation bounds, staged accumulation, bulk primitives and
 element picking, live capture over the existing `PixelFrameLease`, and the
 composition diagnostics. `ROADMAP.md` owns that scope.
+
+## The faithfulness audit
+
+A standing review of the implementation against the reference set. It exists because
+the register's 38 entries are the decisions that were made **consciously**, and
+nothing has yet looked for the ones made by accident — a normative clause quietly
+unimplemented, a silence resolved in code and never recorded, a contract that holds
+for the cases a test covers and not for the one it describes.
+
+**Run it now.** The audit is worth most while the public API is unstable and
+breaking changes cost nothing, and both of those end at the first published package.
+It is also cheapest now relative to later: the surface only grows.
+
+### Partition
+
+One pass per area, each paired with the document that owns it, each independently
+verifiable, and all of them disjoint in file ownership so they can run concurrently.
+
+| Pass | Implementation | Owning reference |
+| --- | --- | --- |
+| A | `Core/Runtime`, `Core/Timing` | ARCHITECTURE §2, §4.1–4.3, §15 |
+| B | `Core/SceneGraph`, `Core/Layers` | ARCHITECTURE §3.3, §5.1–5.2, §6.1–6.6, §8 |
+| C | `Core/Rendering` contracts, `RenderTraverser`, brackets | ARCHITECTURE §5.3, §6.7, §7; NAJM-COMPOSITOR Part I |
+| D | `Skia/SkiaCompositor`, targets, providers, surface accounting | NAJM-COMPOSITOR Part II; NAJM-SKIA Part I |
+| E | `Core/Input`, `Host.Desktop` routing and letterboxing | ARCHITECTURE §9; NAJM-SKIA Part IV |
+| F | `Core/Delivery`, `Skia/Delivery`, frame diagnostics | ARCHITECTURE §11; NAJM-SKIA Part V |
+| G | `Core/Text`, `Najm.Text`, `Najm.Lib/Text` | NAJM-TEXT Parts I–III, VI |
+| H | `Skia` drawing lowering, descriptor cache, GL interop | NAJM-SKIA Parts I–III, VI |
+| I | `Najm.Utils`, and the colour/easing conventions | ARCHITECTURE §3.2, §3.4, §10.6 |
+
+### What counts as a finding
+
+Four kinds, and the pass states which kind each finding is:
+
+1. **Contradiction** — the code does something a normative clause forbids, or omits
+   something it requires. Cite the clause and the code location.
+2. **Unrecorded resolution** — the reference is silent or ambiguous and the code
+   chose. This is not a defect; it is a **missing deviation entry**, and the finding
+   is the entry.
+3. **Unsoundness** — the code is wrong on its own terms regardless of the documents:
+   a contract that fails on an input it accepts, a lifetime that can be violated, an
+   invariant that holds only for the tested path. State the input or sequence that
+   breaks it.
+4. **Documentation defect** — the reference is wrong, self-contradictory, or
+   impossible. These go to the conflicts section, as four already have.
+
+**Every finding carries evidence.** A cited clause and a cited line at minimum; a
+failing test where one can be written, and a failing test is what promotes a finding
+from plausible to confirmed. A finding that cannot be stated as "given X, the code
+does Y, and the document requires Z" is not ready to report.
+
+### What is not a finding
+
+Naming, formatting, and style. "Could be refactored." Performance without a
+measurement. Missing features that the roadmap defers on purpose — check `ROADMAP.md`
+and the deferral list before reporting an absence. Anything already recorded in
+`DEVIATIONS.md` or `TECH-DEBT.md`, which both must be read first; re-reporting a
+known decision as a defect is the most likely way for this audit to waste its own
+output.
+
+### Output and sequencing
+
+- **The audit is read-only.** Each pass produces a written report and proposed
+  register entries; it does not fix what it finds. A pass that fixes as it goes
+  produces a diff nobody can review against a specification, which is the opposite
+  of the point.
+- Triage is the primary agent's: each finding is accepted as an entry, accepted as a
+  fix, rejected with a reason, or promoted to an owner question.
+- Fixes land afterwards as ordinary slices, one subsystem at a time, each with its
+  own tests.
+- A pass that finds nothing reports that, and says what it checked. An audit with no
+  negative results is an audit that was not run.

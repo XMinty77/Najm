@@ -61,13 +61,14 @@ set disagreeing with itself rather than the implementation departing from it.
 | 36 | Nothing ends a live run except the window closing | **Decided, unbuilt** |
 | 37 | The far edge of the content rect is a partially covered pixel | **Owner, deferred** |
 | 38 | `VectorPolicy` — the escape hatch the reference uses and never declares | **Decided, unbuilt** |
+| 39 | The preparation phase: `IAssets` is specified, unimplemented, and narrower than its consumers | **Direction** |
 
-**Nothing is waiting on a decision.** As of 2026-10-06 the three entries that were open
-questions have all been answered: 36 (how a live run ends) is decided and unbuilt, 8 (Fast math
-preconditions) carries two implementation obligations rather than a question, and 37 (the
-partially covered content edge) is deliberately deferred by the owner and blocks nothing. Entry
-38 (`VectorPolicy`) is decided and unbuilt. Entry 12 is *Recorded retroactively*, which the entry
-itself names as the defect.
+**Nothing is waiting on a decision.** The three entries that were open questions were answered on
+2026-10-06: 36 (how a live run ends) and 38 (`VectorPolicy`) are decided and unbuilt, 8 carries two
+implementation obligations rather than a question, and 37 is deliberately deferred by the owner and
+blocks nothing. 39 is accepted architectural direction whose implementation is deferred to its
+second consumer on purpose. Entry 12 is *Recorded retroactively*, which the entry itself names as
+the defect.
 
 **Documentation conflicts**, at the end of this file: fast-path numbering (resolved), easing
 names (resolved), M1 scope ROADMAP vs. PLAN (resolved, and its stated reason has since been
@@ -1832,6 +1833,83 @@ anyway — `SAMPLES.md` calls `Plus` blending and other raster-only constructs "
 than a defect", and expected is not the same as unreported.
 
 **Status:** Open — decided, not yet implemented. The vector writers are the first consumer.
+
+---
+
+## 39. The preparation phase: `IAssets` is specified, unimplemented, and narrower than its consumers
+
+**Docs:** §4.4 gives `IAssets` the job of loading and caching shared resources behind portable
+handles — `IImage`, `FontFace`, `IAudioClip`, `IPath`, capability-gated shader handles — and states
+the rule that matters most here: **asset I/O is confined to load/attach transitions.** §7.4's
+handle list gives it a verb, `IPath` being "a `PathBuilder` baked once", and Appendix B writes the
+call twice: `Env.Assets.Bake(new PathBuilder()…)`, `Env.Assets.Bake(Paths.Wave(…))`. §4.2 has the
+host construct `Assets` natively.
+
+**Current state:** `IAssets` has no realization anywhere in the repository. Entry 34 records the
+consequence — `HostOptions.Assets` is an injection point defaulting to Core's `NullAssets`,
+because the host cannot construct something that does not exist. No `Bake` overload exists for
+anything. Every subsystem that needs expensive preparation has therefore been specified with its
+*own* private cache:
+
+- `NAJM-TEXT.md` Part IV gives the dvisvgm tier a disk cache keyed
+  `(contentHash, preambleHash, distroStamp)` under a project cache dir.
+- `NAJM-TEXT.md` I.13 and `NAJM-SKIA.md` IV.9 give layout, shaped-run and glyph-path caches
+  environment ownership so they survive warm restart.
+- `NAJM-SKIA.md` owns `IPath → SKPath`, blob and picture caches in backend side tables.
+- The descriptor cache (entry in `Najm.Skia`) is a fourth, with its own bound and eviction policy.
+
+**The proposal, from the owner, 2026-10-06.** Promote preparation from four private caches to one
+named engine seam: a **bake step** that scenes, nodes and behaviors can use to produce and cache
+derived assets ahead of the first frame. Named consumers, two of which are already recorded pains
+in this project:
+
+1. **TeX.** Part IV's whole pipeline is a bake — run a toolchain, cache the artifact, never launch
+   a process on a cache hit.
+2. **Shader compilation.** The hydrogen integration measured a **30-second first draw** and
+   identified it as a shader compile (its finding H-5). A renderer whose first frame costs thirty
+   seconds is unusable live and misleading offline.
+3. **Network fetches** for scene data.
+4. **Deterministically recorded clips** — a sub-production rendered once and replayed as an asset.
+
+**Accepted as architectural direction.** The reasons it is the right shape and not an
+over-generalization: the lifecycle already has the phase this belongs to, since §4.4 confines
+asset I/O to load/attach and a bake is exactly load-phase work; `IAssets` already has the verb and
+two call sites in the reference's own examples; and `ROADMAP.md`'s promotion rule — "two separate
+authoring examples independently need the same abstraction" — is satisfied several times over, by
+four consumers of which TeX and shader compilation are both specified or measured rather than
+hypothetical.
+
+**The four invariants it has to carry**, each derived from a rule the engine already holds:
+
+- **Content-addressed, not time-addressed.** A bake's identity is a hash of its declared inputs,
+  and a cache hit requires every input to match. Part IV's `(contentHash, preambleHash,
+  distroStamp)` is the pattern to generalize, and its **distro stamp is the important half** — it
+  makes external-toolchain drift visible instead of serving a stale artifact. Generalized: an
+  input stamp covering every external fact the bake depended on.
+- **Confined to the load phase, and therefore absent from `Tick`.** §2.2's reproducibility posture
+  and the fixed-step determinism contract both break if a frame can read the network or the clock.
+  A bake first requested outside load **fails loud** naming the rule, exactly as Part IV already
+  specifies for a Full math item.
+- **A replay must not bake differently.** Two fresh-instance fixed-step runs produce byte-identical
+  frame hashes (§2.2), so a bake either produces identical output from identical inputs or is not
+  admissible as a bake. Non-reproducible sources — a live network endpoint, a clock — are
+  admissible only by being *baked once into a pinned artifact* that the replay then reads.
+- **Environment-owned, surviving warm restart.** IV.9 already requires this of the text caches,
+  and a bake that re-ran on every F5 would make the dev loop worse than the problem it solves.
+
+**Deliberately not implemented yet, and the sequencing is the point.** Build Part IV's cache as
+Part IV specifies it, for the one consumer that has a complete specification. Generalize to the
+shared seam when the **second** consumer arrives — shader compilation is the obvious candidate —
+because a facility designed against one example becomes that example's shape, and the four private
+caches above differ in ways a premature generalization would flatten: lifetimes, eviction
+policies, whether the artifact is portable or backend-native, and whether a miss is cheap or
+thirty seconds.
+
+What this entry buys by existing now: the second consumer builds *into* this seam instead of
+inventing a fifth cache, and the first one is written knowing it will be generalized.
+
+**Status:** Open — accepted as direction, implementation deliberately deferred to its second
+consumer.
 
 ---
 
